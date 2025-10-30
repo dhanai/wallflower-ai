@@ -238,3 +238,4 @@ This project was inspired by patterns from the `tryon` project (which uses Fireb
 ## License
 
 MIT
+CI: trigger deploy 2025-10-30T19:25:48Z
