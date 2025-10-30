@@ -1,16 +1,7 @@
 {
+  "projectId": "prj_wlPkJUUT86KyszSmsjYVaunpOa3s",
   "framework": "nextjs",
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "env": {
-    "NEXT_PUBLIC_SUPABASE_URL": "@supabase_url",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@supabase_anon_key",
-    "SUPABASE_SERVICE_ROLE_KEY": "@supabase_service_role_key",
-    "FAL_AI_API_KEY": "@fal_ai_api_key",
-    "GOOGLE_GENAI_API_KEY": "@google_genai_api_key",
-    "SHOPIFY_STORE_DOMAIN": "@shopify_store_domain",
-    "SHOPIFY_STOREFRONT_ACCESS_TOKEN": "@shopify_storefront_token",
-    "SHOPIFY_ADMIN_API_ACCESS_TOKEN": "@shopify_admin_token"
-  }
+  "installCommand": "npm install"
 }
