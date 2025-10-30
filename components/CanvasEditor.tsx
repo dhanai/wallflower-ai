@@ -485,7 +485,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       {/* Header - Fixed Top */}
       <div className="flex-shrink-0 grid grid-cols-3 items-center p-4 bg-white/80 backdrop-blur-xl">
         <div className="flex items-center gap-4">
-          <h2 className="text-lg font-black tracking-tighter text-[#1d1d1f]">wallflower.ai</h2>
+          
         </div>
         {/* Centered iteration controls */}
         <div className="flex items-center justify-center gap-3">
