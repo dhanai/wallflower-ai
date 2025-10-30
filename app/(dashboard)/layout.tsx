@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { Menu } from '@base-ui-components/react/menu';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }).catch(() => {});
   }, []);
 
+  const handleSignOut = async () => {
+    const supabase = createSupabaseClient();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = '/auth/signin';
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-[#1d1d1f]">
       <div className="flex min-h-screen">
@@ -62,24 +72,40 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
           </nav>
 
-          {/* Bottom account section */}
+          {/* Bottom account section with drop-up menu */}
           <div className="mt-auto px-2 pt-2">
-            <Link href="/account" className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/10">
-              <span className="inline-flex w-8 h-8 rounded-full overflow-hidden bg-white/20 items-center justify-center">
-                {userAvatar ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={userAvatar} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor"><path d="M320 352c88.4 0 160-71.6 160-160S408.4 32 320 32 160 103.6 160 192s71.6 160 160 160zm0 64C194.4 416 64 470.5 64 544c0 35.3 28.7 64 64 64H512c35.3 0 64-28.7 64-64c0-73.5-130.4-128-256-128z"/></svg>
-                )}
-              </span>
-              {expanded && (
-                <span className="flex flex-col">
-                  <span className="text-sm leading-tight">{userName ?? 'Account'}</span>
-                  <span className="text-[11px] text-white/60 leading-tight truncate max-w-[160px]">{userEmail ?? ''}</span>
+            <Menu.Root>
+              <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg白/10 hover:bg-white/10">
+                <span className="inline-flex w-8 h-8 rounded-full overflow-hidden bg-white/20 items-center justify-center">
+                  {userAvatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={userAvatar} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor"><path d="M320 352c88.4 0 160-71.6 160-160S408.4 32 320 32 160 103.6 160 192s71.6 160 160 160zm0 64C194.4 416 64 470.5 64 544c0 35.3 28.7 64 64 64H512c35.3 0 64-28.7 64-64c0-73.5-130.4-128-256-128z"/></svg>
+                  )}
                 </span>
-              )}
-            </Link>
+                {expanded && (
+                  <span className="flex-1 min-w-0 flex flex-col text-left">
+                    <span className="text-sm leading-tight truncate">{userName ?? 'Account'}</span>
+                    <span className="text-[11px] text-white/60 leading-tight truncate">{userEmail ?? ''}</span>
+                  </span>
+                )}
+                <span className="ml-auto text-white/60">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-3.5 h-3.5" fill="currentColor"><path d="M320 392L192 264h256L320 392z"/></svg>
+                </span>
+              </Menu.Trigger>
+              <Menu.Portal>
+                <Menu.Positioner side="top" align="start" sideOffset={8}>
+                  <Menu.Popup className="bg-white text-[#1d1d1f] border border-gray-200 rounded-lg shadow-lg py-2 min-w-[180px]">
+                    <Menu.Item asChild>
+                      <Link href="/account" className="block px-4 py-2 text-sm hover:bg-gray-100">Account</Link>
+                    </Menu.Item>
+                    <Menu.Separator className="my-1 h-px bg-gray-200" />
+                    <Menu.Item onClick={handleSignOut} className="px-4 py-2 text-sm hover:bg-gray-100">Sign out</Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
             {expanded && <div className="text-[10px] text-white/40 px-2 py-1">© 2025</div>}
           </div>
         </aside>
