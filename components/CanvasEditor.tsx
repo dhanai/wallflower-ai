@@ -68,7 +68,7 @@ const models = [
   { label: 'Seedream V4', value: 'seedream-v4' },
 ];
 
-export default function CanvasEditor() {
+export default function CanvasEditor({ embedded = false }: { embedded?: boolean } = {}) {
   const [mounted, setMounted] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [selectedStyle, setSelectedStyle] = useState<string>('');
@@ -481,7 +481,7 @@ export default function CanvasEditor() {
   }
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-br from-white to-gray-50 flex flex-col" style={{ overflow: 'hidden' }}>
+    <div className={`${embedded ? 'min-h-screen' : 'fixed inset-0'} bg-gradient-to-br from-white to-gray-50 flex flex-col`} style={{ overflow: 'hidden' }}>
       {/* Header - Fixed Top */}
       <div className="flex-shrink-0 grid grid-cols-3 items-center p-4 bg-white/80 backdrop-blur-xl">
         <div className="flex items-center gap-4">
