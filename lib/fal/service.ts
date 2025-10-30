@@ -21,6 +21,7 @@ export interface ImageEditOptions {
   noiseLevel?: number;
   model?: 'gemini-25' | 'recraft-v3' | 'seedream-v4';
   styleId?: string;
+  referenceImageUrl?: string; // optional secondary reference/attachment
 }
 
 /**
@@ -496,9 +497,10 @@ export async function editImageWithGemini25(
       finalPrompt = `${finalPrompt}. Apply a minimal, conservative change only; keep the rest unchanged. Preserve subject, composition, style, palette, typography, proportions, and layout. Do not redesign or recompose.`;
     }
 
+    const imageUrls = [options.imageUrl].concat(options.referenceImageUrl ? [options.referenceImageUrl] : []);
     const input: any = {
       prompt: finalPrompt,
-      image_urls: [options.imageUrl],
+      image_urls: imageUrls,
       num_images: 1,
       sync_mode: true,
       noise_level: options.noiseLevel ?? 0.25,
