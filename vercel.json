@@ -1,5 +1,4 @@
 {
-  "projectId": "prj_wlPkJUUT86KyszSmsjYVaunpOa3s",
   "framework": "nextjs",
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
