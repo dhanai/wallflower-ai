@@ -475,6 +475,61 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
     setGeneratedImage(imageHistory[newIndex]);
   };
 
+  // Download current image as PNG (preserve alpha when available)
+  const downloadCurrentAsPng = async () => {
+    if (!generatedImage) return;
+    const filename = `design-${Date.now()}.png`;
+    try {
+      if (generatedImage.startsWith('data:image/png')) {
+        const a = document.createElement('a');
+        a.href = generatedImage;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      const blobUrl: string = await new Promise((resolve, reject) => {
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas not supported'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error('Failed to create PNG'));
+              return;
+            }
+            resolve(URL.createObjectURL(blob));
+          }, 'image/png');
+        };
+        img.onerror = () => reject(new Error('Image load failed'));
+        img.src = generatedImage;
+      });
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      const a = document.createElement('a');
+      a.href = generatedImage;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
   // Prevent hydration mismatch by not rendering until mounted
   if (!mounted) {
     return null;
@@ -516,22 +571,14 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         <div className="flex items-center justify-end gap-2">
           {generatedImage && (
             <button
-              onClick={() => {
-                // Download functionality
-                const link = document.createElement('a');
-                link.href = generatedImage;
-                link.download = `design-${Date.now()}.jpg`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-              }}
+              onClick={downloadCurrentAsPng}
               className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
-              title="Download"
+              title="Download PNG"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
-              <span className="hidden sm:inline text-sm">Download</span>
+              <span className="hidden sm:inline text-sm">Download PNG</span>
             </button>
           )}
         </div>
@@ -637,7 +684,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       <div className="relative flex-shrink-0 bg-white/80 backdrop-blur-xl">
         {/* Selectors */}
         {showSettings && (
-        <div className="absolute left-0 right-0 -top-[140px] px-4 pt-2 pb-2 z-20">
+        <div className="absolute left-0 right-0 -top-[70px] px-4 pt-2 pb-2 z-20">
           <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-xl p-3">
           <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
