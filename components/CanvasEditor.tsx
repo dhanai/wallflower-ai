@@ -570,16 +570,28 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         </div>
         <div className="flex items-center justify-end gap-2">
           {generatedImage && (
-            <button
-              onClick={downloadCurrentAsPng}
-              className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
-              title="Download PNG"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-              <span className="hidden sm:inline text-sm">Download PNG</span>
-            </button>
+            <>
+              <button
+                onClick={() => {
+                  // TODO: Navigate to order page or open order preview
+                  console.log('Order clicked');
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
+                title="Order"
+              >
+                <span className="text-sm">Order</span>
+              </button>
+              <button
+                onClick={downloadCurrentAsPng}
+                className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
+                title="Download PNG"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                <span className="hidden sm:inline text-sm">Download PNG</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1049,7 +1061,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                     >
                       {/* Upscale icon (SeedVR2) */}
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-5 h-5" width="1em" height="1em">
-                        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
+                        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5">
                           <path d="M16 3h5v5m-4 13h2a2 2 0 0 0 2-2m0-7v3m0-12l-5 5M3 7V5a2 2 0 0 1 2-2m0 18l4.144-4.144a1.21 1.21 0 0 1 1.712 0L13 19M9 3h3"></path>
                           <rect width="10" height="10" x="3" y="11" rx="1"></rect>
                         </g>
