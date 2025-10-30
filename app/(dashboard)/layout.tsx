@@ -75,7 +75,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {/* Bottom account section with drop-up menu */}
           <div className="mt-auto px-2 pt-2">
             <Menu.Root>
-              <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg白/10 hover:bg-white/10">
+              <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/10">
                 <span className="inline-flex w-8 h-8 rounded-full overflow-hidden bg-white/20 items-center justify-center">
                   {userAvatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -96,12 +96,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Menu.Trigger>
               <Menu.Portal>
                 <Menu.Positioner side="top" align="start" sideOffset={8}>
-                  <Menu.Popup className="bg-white text-[#1d1d1f] border border-gray-200 rounded-lg shadow-lg py-2 min-w-[180px]">
+                  <Menu.Popup className="bg-[#111111] text-white border border-white/10 rounded-lg shadow-xl py-1.5 min-w-[180px]">
                     <Menu.Item asChild>
-                      <Link href="/account" className="block px-4 py-2 text-sm hover:bg-gray-100">Account</Link>
+                      <Link href="/account" className="block px-3 py-1.5 text-[13px] hover:bg-white/10">Account</Link>
                     </Menu.Item>
-                    <Menu.Separator className="my-1 h-px bg-gray-200" />
-                    <Menu.Item onClick={handleSignOut} className="px-4 py-2 text-sm hover:bg-gray-100">Sign out</Menu.Item>
+                    <Menu.Separator className="my-1 h-px bg-white/10" />
+                    <Menu.Item onClick={handleSignOut} className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">Sign out</Menu.Item>
                   </Menu.Popup>
                 </Menu.Positioner>
               </Menu.Portal>
