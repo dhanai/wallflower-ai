@@ -1020,26 +1020,41 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                 </Tooltip.Portal>
               </Tooltip.Root>
 
-                {/* Add to Cart moved before Start Over */}
+                {/* Upscale with SeedVR2 (replaces Add to Cart) */}
                 <Tooltip.Root>
                   <Tooltip.Trigger>
                     <button
-                      onClick={() => {
-                        // TODO: Add to cart functionality
-                        console.log('Add to cart clicked');
+                      onClick={async () => {
+                        if (!generatedImage) return;
+                        setLoading(true);
+                        try {
+                          const res = await fetch('/api/designs/upscale', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ imageUrl: generatedImage, upscaleMode: 'factor', upscaleFactor: 2, outputFormat: 'png' }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data?.error || 'Upscale failed');
+                          if (data?.imageUrl) {
+                            applyNewImage(data.imageUrl);
+                          }
+                        } catch (e: any) {
+                          alert(e?.message || 'Failed to upscale');
+                        } finally {
+                          setLoading(false);
+                        }
                       }}
                       disabled={loading || !generatedImage}
                       className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
-                        <path d="M0 72C0 58.7 10.7 48 24 48L69.3 48C96.4 48 119.6 67.4 124.4 94L124.8 96L537.5 96C557.5 96 572.6 114.2 568.9 133.9L537.8 299.8C532.1 330.1 505.7 352 474.9 352L171.3 352L176.4 380.3C178.5 391.7 188.4 400 200 400L456 400C469.3 400 480 410.7 480 424C480 437.3 469.3 448 456 448L200.1 448C165.3 448 135.5 423.1 129.3 388.9L77.2 102.6C76.5 98.8 73.2 96 69.3 96L24 96C10.7 96 0 85.3 0 72zM160 528C160 501.5 181.5 480 208 480C234.5 480 256 501.5 256 528C256 554.5 234.5 576 208 576C181.5 576 160 554.5 160 528zM384 528C384 501.5 405.5 480 432 480C458.5 480 480 501.5 480 528C480 554.5 458.5 576 432 576C405.5 576 384 554.5 384 528zM336 142.4C322.7 142.4 312 153.1 312 166.4L312 200L278.4 200C265.1 200 254.4 210.7 254.4 224C254.4 237.3 265.1 248 278.4 248L312 248L312 281.6C312 294.9 322.7 305.6 336 305.6C349.3 305.6 360 294.9 360 281.6L360 248L393.6 248C406.9 248 417.6 237.3 417.6 224C417.6 210.7 406.9 200 393.6 200L360 200L360 166.4C360 153.1 349.3 142.4 336 142.4z"/>
-                      </svg>
+                      {/* Upscale icon */}
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5"><path d="M256 64C273.7 64 288 78.3 288 96L288 160 352 160C369.7 160 384 174.3 384 192 384 209.7 369.7 224 352 224L256 224C238.3 224 224 209.7 224 192L224 96C224 78.3 238.3 64 256 64zM288 480C288 497.7 273.7 512 256 512 238.3 512 224 497.7 224 480L224 384C224 366.3 238.3 352 256 352L352 352C369.7 352 384 366.3 384 384 384 401.7 369.7 416 352 416L288 416 288 480zM480 224C497.7 224 512 238.3 512 256L512 352C512 369.7 497.7 384 480 384L384 384C366.3 384 352 369.7 352 352 352 334.3 366.3 320 384 320L448 320 448 256C448 238.3 462.3 224 480 224zM192 256C209.7 256 224 270.3 224 288 224 305.7 209.7 320 192 320L128 320 128 384C128 401.7 113.7 416 96 416 78.3 416 64 401.7 64 384L64 288C64 270.3 78.3 256 96 256L192 256z"/></svg>
                     </button>
                   </Tooltip.Trigger>
                   <Tooltip.Portal>
                     <Tooltip.Positioner>
                       <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
-                        Add to Cart
+                        Upscale 2×
                       </Tooltip.Popup>
                     </Tooltip.Positioner>
                   </Tooltip.Portal>

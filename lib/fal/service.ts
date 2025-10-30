@@ -723,6 +723,47 @@ export async function removeBackground(imageUrl: string): Promise<string> {
 }
 
 /**
+ * Upscale an image using SeedVR2
+ */
+export async function upscaleImageSeedVR2(
+  imageUrl: string,
+  opts?: { upscaleMode?: 'factor' | 'target'; upscaleFactor?: number; targetResolution?: '720p' | '1080p' | '1440p' | '2160p'; outputFormat?: 'png' | 'jpg' | 'webp' }
+): Promise<string> {
+  try {
+    const input: any = {
+      image_url: imageUrl,
+      upscale_mode: opts?.upscaleMode || 'factor',
+      output_format: opts?.outputFormat || 'png',
+      sync_mode: true,
+    };
+    if (input.upscale_mode === 'factor') {
+      input.upscale_factor = Math.min(Math.max(opts?.upscaleFactor ?? 2, 1), 10);
+    } else if (opts?.targetResolution) {
+      input.target_resolution = opts.targetResolution;
+    }
+
+    console.log('Calling fal.ai SeedVR2 upscale with:', input);
+
+    const result = await fal.subscribe('fal-ai/seedvr/upscale/image', {
+      input,
+      logs: true,
+      onQueueUpdate: (update) => {
+        console.log('Fal.ai upscaler queue update:', update);
+      },
+    });
+
+    const url = result?.data?.image?.url;
+    if (!url) {
+      throw new Error('Upscaler did not return an image URL');
+    }
+    return url;
+  } catch (error: any) {
+    console.error('Upscale error:', error);
+    throw new Error(`Upscale failed: ${error?.message || 'Unknown error'}`);
+  }
+}
+
+/**
  * Prepare design for printing by creating knockouts (transparent areas)
  * Similar to DTG RIP software - knocks out black or white areas
  */
