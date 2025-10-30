@@ -637,8 +637,8 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       <div className="relative flex-shrink-0 bg-white/80 backdrop-blur-xl">
         {/* Selectors */}
         {showSettings && (
-        <div className="absolute left-0 right-0 -top-[220px] px-4 pt-4 pb-2 z-20">
-          <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-2xl p-3">
+        <div className="absolute left-0 right-0 -top-[140px] px-4 pt-2 pb-2 z-20">
+          <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-xl p-3">
           <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Select.Root items={models} value={selectedModel} onValueChange={(value) => {
