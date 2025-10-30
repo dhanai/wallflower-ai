@@ -92,6 +92,10 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const [mockupLoading, setMockupLoading] = useState(false);
   const [backgroundColor, setBackgroundColor] = useState<string>('#ffffff');
   const [showSettings, setShowSettings] = useState(false);
+  const [showOrderDrawer, setShowOrderDrawer] = useState(false);
+  const [orderProductType, setOrderProductType] = useState<'tshirt' | 'crewneck'>('tshirt');
+  const [orderSize, setOrderSize] = useState<string>('lg');
+  const [orderQuantity, setOrderQuantity] = useState<number>(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -582,10 +586,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                 <span className="hidden sm:inline text-sm">Download</span>
               </button>
               <button
-                onClick={() => {
-                  // TODO: Navigate to order page or open order preview
-                  console.log('Order clicked');
-                }}
+                onClick={() => setShowOrderDrawer(true)}
                 className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
                 title="Order"
               >
@@ -1169,6 +1170,141 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
             </Tooltip.Provider>
           </div>
       </div>
+
+      {/* Order Drawer */}
+      {showOrderDrawer && (
+        <>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowOrderDrawer(false)} />
+          <div className="fixed right-0 top-0 bottom-0 w-full max-w-sm bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-out flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-[#1d1d1f]">Place Order</h2>
+              <button
+                onClick={() => setShowOrderDrawer(false)}
+                className="p-1.5 text-gray-600 hover:text-[#1d1d1f] hover:bg-gray-100 rounded-lg transition-colors"
+                title="Close"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Image Thumbnail */}
+              {generatedImage && (
+                <div className="flex items-center justify-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <img
+                    src={generatedImage}
+                    alt="Design preview"
+                    className="max-w-full max-h-32 object-contain rounded"
+                  />
+                </div>
+              )}
+
+              {/* Product Type */}
+              <div>
+                <label className="block text-xs font-medium text-[#1d1d1f] mb-1.5">Product Type</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setOrderProductType('tshirt')}
+                    className={`px-3 py-2 rounded-lg border-2 transition-all text-sm ${
+                      orderProductType === 'tshirt'
+                        ? 'border-[#1d1d1f] bg-[#1d1d1f] text-white'
+                        : 'border-gray-200 bg-white text-[#1d1d1f] hover:border-gray-300'
+                    }`}
+                  >
+                    T-Shirt
+                  </button>
+                  <button
+                    onClick={() => setOrderProductType('crewneck')}
+                    className={`px-3 py-2 rounded-lg border-2 transition-all text-sm ${
+                      orderProductType === 'crewneck'
+                        ? 'border-[#1d1d1f] bg-[#1d1d1f] text-white'
+                        : 'border-gray-200 bg-white text-[#1d1d1f] hover:border-gray-300'
+                    }`}
+                  >
+                    Crewneck
+                  </button>
+                </div>
+              </div>
+
+              {/* Size Selection */}
+              <div>
+                <label className="block text-xs font-medium text-[#1d1d1f] mb-1.5">Size</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {['sm', 'md', 'lg', 'xl', '2x', '3x'].map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => setOrderSize(size)}
+                      className={`px-2 py-1.5 rounded-lg border-2 transition-all text-xs ${
+                        orderSize === size
+                          ? 'border-[#1d1d1f] bg-[#1d1d1f] text-white'
+                          : 'border-gray-200 bg-white text-[#1d1d1f] hover:border-gray-300'
+                      }`}
+                    >
+                      {size.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <label className="block text-xs font-medium text-[#1d1d1f] mb-1.5">Quantity</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setOrderQuantity(Math.max(1, orderQuantity - 1))}
+                    className="px-2.5 py-1.5 rounded-lg border-2 border-gray-200 bg-white text-[#1d1d1f] hover:border-gray-300 transition-all text-sm"
+                    disabled={orderQuantity <= 1}
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    value={orderQuantity}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val) && val >= 1) {
+                        setOrderQuantity(val);
+                      }
+                    }}
+                    className="flex-1 px-3 py-1.5 rounded-lg border-2 border-gray-200 text-center text-sm focus:outline-none focus:border-[#1d1d1f]"
+                  />
+                  <button
+                    onClick={() => setOrderQuantity(orderQuantity + 1)}
+                    className="px-2.5 py-1.5 rounded-lg border-2 border-gray-200 bg-white text-[#1d1d1f] hover:border-gray-300 transition-all text-sm"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Price */}
+              <div className="border-t border-gray-200 pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">Price</span>
+                  <span className="text-lg font-semibold text-[#1d1d1f]">${(13 * orderQuantity).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer with Complete Order Button */}
+            <div className="p-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  // TODO: Complete order functionality
+                  const totalPrice = 13 * orderQuantity;
+                  console.log('Complete order:', { productType: orderProductType, size: orderSize, quantity: orderQuantity, price: totalPrice });
+                  alert('Order functionality coming soon!');
+                }}
+                className="w-full px-4 py-2.5 bg-[#1d1d1f] text-white rounded-lg hover:bg-[#2d2d2f] transition-colors text-sm font-medium"
+              >
+                Complete Order
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
