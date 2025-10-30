@@ -1047,8 +1047,13 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                       disabled={loading || !generatedImage}
                       className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {/* Upscale icon */}
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5"><path d="M256 64C273.7 64 288 78.3 288 96L288 160 352 160C369.7 160 384 174.3 384 192 384 209.7 369.7 224 352 224L256 224C238.3 224 224 209.7 224 192L224 96C224 78.3 238.3 64 256 64zM288 480C288 497.7 273.7 512 256 512 238.3 512 224 497.7 224 480L224 384C224 366.3 238.3 352 256 352L352 352C369.7 352 384 366.3 384 384 384 401.7 369.7 416 352 416L288 416 288 480zM480 224C497.7 224 512 238.3 512 256L512 352C512 369.7 497.7 384 480 384L384 384C366.3 384 352 369.7 352 352 352 334.3 366.3 320 384 320L448 320 448 256C448 238.3 462.3 224 480 224zM192 256C209.7 256 224 270.3 224 288 224 305.7 209.7 320 192 320L128 320 128 384C128 401.7 113.7 416 96 416 78.3 416 64 401.7 64 384L64 288C64 270.3 78.3 256 96 256L192 256z"/></svg>
+                      {/* Upscale icon (SeedVR2) */}
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-5 h-5" width="1em" height="1em">
+                        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2">
+                          <path d="M16 3h5v5m-4 13h2a2 2 0 0 0 2-2m0-7v3m0-12l-5 5M3 7V5a2 2 0 0 1 2-2m0 18l4.144-4.144a1.21 1.21 0 0 1 1.712 0L13 19M9 3h3"></path>
+                          <rect width="10" height="10" x="3" y="11" rx="1"></rect>
+                        </g>
+                      </svg>
                     </button>
                   </Tooltip.Trigger>
                   <Tooltip.Portal>
