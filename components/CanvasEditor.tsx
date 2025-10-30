@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { Tooltip } from '@base-ui-components/react/tooltip';
 import { Menu } from '@base-ui-components/react/menu';
 import { AlertDialog } from '@base-ui-components/react/alert-dialog';
@@ -69,6 +71,7 @@ const models = [
 ];
 
 export default function CanvasEditor({ embedded = false }: { embedded?: boolean } = {}) {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [selectedStyle, setSelectedStyle] = useState<string>('');
@@ -96,13 +99,97 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const [orderProductType, setOrderProductType] = useState<'tshirt' | 'crewneck'>('tshirt');
   const [orderSize, setOrderSize] = useState<string>('lg');
   const [orderQuantity, setOrderQuantity] = useState<number>(1);
+  const [currentDesignId, setCurrentDesignId] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [currentIterationId, setCurrentIterationId] = useState<string | null>(null);
+  const [iterationIds, setIterationIds] = useState<(string | null)[]>([]); // Maps history index to variation ID
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
+  const searchParams = useSearchParams();
+  const supabase = createClient();
 
   // Prevent hydration mismatches
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Load design from query parameter
+  useEffect(() => {
+    async function loadDesign() {
+      const designId = searchParams?.get('design');
+      if (!designId || designId === currentDesignId) return; // Don't reload if already loaded
+
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // Fetch design and its variations
+        const { data: designData, error: designError } = await supabase
+          .from('designs')
+          .select('*')
+          .eq('id', designId)
+          .eq('user_id', user.id)
+          .single();
+
+        if (designError) {
+          // Check if error is due to missing table
+          if (designError.message?.includes('relation') || designError.message?.includes('does not exist')) {
+            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+            alert('Database tables not set up. Please run the migration in Supabase SQL Editor. See DATABASE_SETUP.md for instructions.');
+          } else {
+            console.error('Error loading design:', designError);
+          }
+          return;
+        }
+
+        if (!designData) {
+          console.error('Design not found');
+          return;
+        }
+
+        // Set design ID
+        setCurrentDesignId(designData.id);
+
+        // Load design image and variations (ignore errors if table doesn't exist)
+        const { data: variations, error: variationsError } = await supabase
+          .from('design_variations')
+          .select('*')
+          .eq('design_id', designId)
+          .order('created_at', { ascending: true });
+
+        if (variationsError && !variationsError.message?.includes('relation') && !variationsError.message?.includes('does not exist')) {
+          console.error('Error loading variations:', variationsError);
+        }
+
+        // Build image history: [design image, ...variations]
+        // Also track iteration IDs: [null, ...variation IDs] (null for design image at index 0)
+        const history = [designData.image_url];
+        const ids: (string | null)[] = [null]; // Index 0 is the design, no variation ID
+        if (variations && Array.isArray(variations) && variations.length > 0) {
+          history.push(...variations.map((v) => v.image_url));
+          ids.push(...variations.map((v) => v.id));
+        }
+
+        setImageHistory(history);
+        setIterationIds(ids);
+        setHistoryIndex(history.length - 1); // Show latest iteration
+        setGeneratedImage(history[history.length - 1]);
+
+        // Load prompt if available
+        if (designData.prompt) {
+          setPrompt(designData.prompt);
+          setLastPrompt(designData.prompt);
+        }
+      } catch (error) {
+        console.error('Error loading design:', error);
+      }
+    }
+
+    if (mounted) {
+      loadDesign();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, searchParams]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -218,8 +305,20 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       });
 
       const data = await response.json();
+      
+      if (!response.ok) {
+        console.error('Generation failed:', data);
+        throw new Error(data.error || 'Failed to generate design');
+      }
       if (data.imageUrl) {
         applyNewImage(data.imageUrl);
+        // Store design ID from response (if new design was created)
+        if (data.design?.id) {
+          setCurrentDesignId(data.design.id);
+          console.log('Design saved with ID:', data.design.id);
+        } else {
+          console.warn('Design generated but no design ID returned:', data);
+        }
       }
       // Track last action for retry
       setLastPrompt(prompt);
@@ -244,10 +343,12 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          designId: currentDesignId,
           imageUrl: generatedImage,
           editPrompt: prompt,
           noiseLevel: 0.3,
           model: selectedModel,
+          referenceImageUrl: styleImage || undefined,
           // If we used a custom Recraft style, we need to save that ID
           // For now, we'll pass undefined as styleId for edits
         }),
@@ -280,14 +381,18 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
+            designId: currentDesignId,
             imageUrl: generatedImage, 
             editPrompt: lastPrompt, 
             noiseLevel: 0.3,
             model: lastModel,
+            referenceImageUrl: lastStyleImage || undefined,
           }),
         });
         const data = await res.json();
-        if (data.imageUrl) applyNewImage(data.imageUrl);
+        if (data.imageUrl) {
+          applyNewImage(data.imageUrl);
+        }
         return;
       }
 
@@ -337,7 +442,13 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (data.imageUrl) applyNewImage(data.imageUrl);
+      if (data.imageUrl) {
+        applyNewImage(data.imageUrl);
+        // Store design ID from response (if new design was created)
+        if (data.design?.id) {
+          setCurrentDesignId(data.design.id);
+        }
+      }
     } catch (err) {
       console.error('Retry failed:', err);
       alert('Retry failed');
@@ -445,11 +556,16 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
     }
   };
 
-  const applyNewImage = (url: string) => {
+  const applyNewImage = (url: string, variationId: string | null = null) => {
     setGeneratedImage(url);
     setImageHistory((prev) => {
       const next = prev.slice(0, historyIndex + 1);
       next.push(url);
+      return next;
+    });
+    setIterationIds((prev) => {
+      const next = prev.slice(0, historyIndex + 1);
+      next.push(variationId); // null for locally created iterations
       return next;
     });
     setHistoryIndex((idx) => idx + 1);
@@ -460,8 +576,108 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
     setPrompt('');
     setStyleImage(null);
     setImageHistory([]);
+    setIterationIds([]);
     setHistoryIndex(-1);
+    setCurrentDesignId(null);
+    setCurrentIterationId(null);
     setShowStartOverDialog(false);
+    
+    // Remove design ID from URL if present
+    if (searchParams?.get('design')) {
+      router.push('/editor');
+    }
+  };
+
+  const handleDeleteIteration = async () => {
+    if (!currentIterationId || !currentDesignId) {
+      // If no iteration ID, just remove from local history
+      if (imageHistory.length <= 1) {
+        confirmStartOver();
+        setShowDeleteDialog(false);
+        return;
+      }
+      
+      const newHistory = [...imageHistory];
+      const newIds = [...iterationIds];
+      newHistory.splice(historyIndex, 1);
+      newIds.splice(historyIndex, 1);
+      setImageHistory(newHistory);
+      setIterationIds(newIds);
+      
+      if (historyIndex >= newHistory.length) {
+        setHistoryIndex(newHistory.length - 1);
+        setGeneratedImage(newHistory[newHistory.length - 1]);
+      } else {
+        setGeneratedImage(newHistory[historyIndex]);
+      }
+      setShowDeleteDialog(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/designs/delete-iteration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ designId: currentDesignId, variationId: currentIterationId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.error || 'Failed to delete iteration');
+      }
+
+      // Remove from local history
+      const newHistory = [...imageHistory];
+      const newIds = [...iterationIds];
+      newHistory.splice(historyIndex, 1);
+      newIds.splice(historyIndex, 1);
+      setImageHistory(newHistory);
+      setIterationIds(newIds);
+      
+      if (historyIndex >= newHistory.length) {
+        setHistoryIndex(newHistory.length - 1);
+        setGeneratedImage(newHistory[newHistory.length - 1]);
+      } else {
+        setGeneratedImage(newHistory[historyIndex]);
+      }
+      
+      setCurrentIterationId(null);
+      setShowDeleteDialog(false);
+    } catch (error: any) {
+      alert(error?.message || 'Failed to delete iteration');
+    }
+  };
+
+  const handleDeleteDesign = async () => {
+    if (!currentDesignId) {
+      confirmStartOver();
+      setShowDeleteDialog(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/designs/delete-design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ designId: currentDesignId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data?.error || 'Failed to delete design');
+      }
+
+      // Clear everything
+      confirmStartOver();
+      setShowDeleteDialog(false);
+      
+      // Redirect to designs page if we're viewing a design
+      if (searchParams?.get('design')) {
+        window.location.href = '/designs';
+      }
+    } catch (error: any) {
+      alert(error?.message || 'Failed to delete design');
+    }
   };
 
   const canGoPrev = historyIndex > 0;
@@ -544,7 +760,19 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       {/* Header - Fixed Top */}
       <div className="flex-shrink-0 grid grid-cols-3 items-center p-4 bg-white/80 backdrop-blur-xl">
         <div className="flex items-center gap-4">
-          
+          {generatedImage && (
+            <button
+              onClick={() => setShowStartOverDialog(true)}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors border border-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Start Over"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor">
+                <path d="M232.7 69.9L224 96L128 96C110.3 96 96 110.3 96 128C96 145.7 110.3 160 128 160L512 160C529.7 160 544 145.7 544 128C544 110.3 529.7 96 512 96L416 96L407.3 69.9C402.9 56.8 390.7 48 376.9 48L263.1 48C249.3 48 237.1 56.8 232.7 69.9zM512 208L128 208L149.1 531.1C150.7 556.4 171.7 576 197 576L443 576C468.3 576 489.3 556.4 490.9 531.1L512 208z"/>
+              </svg>
+              <span className="text-sm">Start Over</span>
+            </button>
+          )}
         </div>
         {/* Centered iteration controls */}
         <div className="flex items-center justify-center gap-3">
@@ -1047,7 +1275,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                           const res = await fetch('/api/designs/upscale', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ imageUrl: generatedImage, upscaleMode: 'factor', upscaleFactor: 2, outputFormat: 'png' }),
+                            body: JSON.stringify({ designId: currentDesignId, imageUrl: generatedImage, upscaleMode: 'factor', upscaleFactor: 2, outputFormat: 'png' }),
                           });
                           const data = await res.json();
                           if (!res.ok) throw new Error(data?.error || 'Upscale failed');
@@ -1081,14 +1309,22 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   </Tooltip.Portal>
                 </Tooltip.Root>
 
-                {/* Start Over moved after Add to Cart */}
+                {/* Delete Button */}
                 <Tooltip.Root>
                   <Tooltip.Trigger>
                     <button
-                      onClick={() => setShowStartOverDialog(true)}
+                      onClick={() => {
+                        // Set current iteration ID based on history index
+                        // If historyIndex > 0, it's a variation (iteration), otherwise it's the main design
+                        const iterationId = historyIndex > 0 && iterationIds.length > historyIndex 
+                          ? iterationIds[historyIndex] 
+                          : null;
+                        setCurrentIterationId(iterationId);
+                        setShowDeleteDialog(true);
+                      }}
                       disabled={loading || !generatedImage}
-                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none"
-                      title="Start Over"
+                      className="px-3 py-2 text-gray-700 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none"
+                      title="Delete"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
                         <path d="M232.7 69.9L224 96L128 96C110.3 96 96 110.3 96 128C96 145.7 110.3 160 128 160L512 160C529.7 160 544 145.7 544 128C544 110.3 529.7 96 512 96L416 96L407.3 69.9C402.9 56.8 390.7 48 376.9 48L263.1 48C249.3 48 237.1 56.8 232.7 69.9zM512 208L128 208L149.1 531.1C150.7 556.4 171.7 576 197 576L443 576C468.3 576 489.3 556.4 490.9 531.1L512 208z"/>
@@ -1098,7 +1334,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   <Tooltip.Portal>
                     <Tooltip.Positioner>
                       <Tooltip.Popup className="bg-[#1d1d1f] text-white text-xs px-3 py-1.5 rounded-lg shadow-lg">
-                        Start Over
+                        Delete
                       </Tooltip.Popup>
                     </Tooltip.Positioner>
                   </Tooltip.Portal>
@@ -1112,7 +1348,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                         Start Over?
                       </AlertDialog.Title>
                       <AlertDialog.Description className="text-gray-600 mb-6">
-                        This will clear your current design and all history. This cannot be undone.
+                        This will clear your current workspace. Any saved designs will remain in your collection.
                       </AlertDialog.Description>
                       <div className="flex gap-3 justify-end">
                         <AlertDialog.Close className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
@@ -1122,7 +1358,43 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                           onClick={confirmStartOver}
                           className="px-4 py-2 text-sm text-white bg-[#1d1d1f] hover:bg-[#2d2d2f] rounded-lg transition-colors"
                         >
-                          Clear & Start Over
+                          Clear Workspace
+                        </AlertDialog.Close>
+                      </div>
+                    </AlertDialog.Popup>
+                  </AlertDialog.Portal>
+                </AlertDialog.Root>
+
+                {/* Delete Dialog */}
+                <AlertDialog.Root open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+                  <AlertDialog.Portal>
+                    <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+                    <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl p-6 max-w-md">
+                      <AlertDialog.Title className="text-xl font-semibold text-[#1d1d1f] mb-2">
+                        Delete?
+                      </AlertDialog.Title>
+                      <AlertDialog.Description className="text-gray-600 mb-6">
+                        {currentIterationId && historyIndex > 0
+                          ? 'Delete this iteration? This will remove it from your design history.'
+                          : 'Delete this entire design? This will permanently remove the design and all its iterations.'}
+                      </AlertDialog.Description>
+                      <div className="flex gap-3 justify-end">
+                        <AlertDialog.Close className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                          Cancel
+                        </AlertDialog.Close>
+                        {historyIndex > 0 && imageHistory.length > 1 && (
+                          <AlertDialog.Close 
+                            onClick={handleDeleteIteration}
+                            className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                          >
+                            Delete Iteration
+                          </AlertDialog.Close>
+                        )}
+                        <AlertDialog.Close 
+                          onClick={handleDeleteDesign}
+                          className="px-4 py-2 text-sm text-white bg-[#1d1d1f] hover:bg-[#2d2d2f] rounded-lg transition-colors"
+                        >
+                          Delete Design
                         </AlertDialog.Close>
                       </div>
                     </AlertDialog.Popup>

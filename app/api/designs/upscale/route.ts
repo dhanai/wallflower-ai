@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { imageUrl, upscaleMode, upscaleFactor, targetResolution, outputFormat } = body || {};
+    const { designId, imageUrl, upscaleMode, upscaleFactor, targetResolution, outputFormat } = body || {};
     if (!imageUrl) {
       return NextResponse.json({ error: 'imageUrl is required' }, { status: 400 });
     }
@@ -25,6 +25,37 @@ export async function POST(request: NextRequest) {
       targetResolution,
       outputFormat: outputFormat || 'png',
     });
+
+    // Save variation to database if designId is provided
+    if (designId && user && isSupabaseConfigured) {
+      try {
+        const { error: dbError } = await supabase
+          .from('design_variations')
+          .insert({
+            design_id: designId,
+            image_url: url,
+            variation_type: 'upscaled',
+            prompt: 'Upscaled version',
+          });
+
+        if (dbError) {
+          // Check if error is due to missing table
+          if (dbError.message?.includes('relation') || dbError.message?.includes('does not exist')) {
+            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+          } else {
+            console.error('Database error saving upscale variation (non-fatal):', dbError);
+          }
+        }
+      } catch (dbError) {
+        // Check if error is due to missing table
+        if (dbError instanceof Error && (dbError.message?.includes('relation') || dbError.message?.includes('does not exist'))) {
+          console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+        } else {
+          console.error('Database error saving upscale variation (non-fatal):', dbError);
+        }
+        // Continue even if save fails
+      }
+    }
 
     return NextResponse.json({ imageUrl: url });
   } catch (error: any) {

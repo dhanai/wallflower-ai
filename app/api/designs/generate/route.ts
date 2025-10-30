@@ -39,8 +39,35 @@ export async function POST(request: NextRequest) {
 
     // Save design to database only if user is authenticated and Supabase is configured
     let design = null;
+    console.log('Saving design - User:', user?.id, 'Supabase configured:', isSupabaseConfigured);
     if (user && isSupabaseConfigured) {
       try {
+        // Ensure user exists in public.users table
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', user.id)
+          .single();
+
+        if (!existingUser) {
+          // Create user in public.users table
+          const { error: userError } = await supabase
+            .from('users')
+            .insert({
+              id: user.id,
+              email: user.email || null,
+              full_name: user.user_metadata?.full_name || user.user_metadata?.name || null,
+              avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
+            });
+
+          if (userError) {
+            console.error('Error creating user in public.users:', userError);
+            // Continue anyway - might be a constraint issue
+          } else {
+            console.log('Created user in public.users:', user.id);
+          }
+        }
+
         const { data: designData, error: dbError } = await supabase
           .from('designs')
           .insert({
@@ -55,9 +82,23 @@ export async function POST(request: NextRequest) {
 
         if (!dbError && designData) {
           design = designData;
+          console.log('Design saved successfully:', designData.id);
+        } else if (dbError) {
+          // Check if error is due to missing table
+          if (dbError.message?.includes('relation') || dbError.message?.includes('does not exist')) {
+            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+          } else {
+            console.error('Database error saving design:', dbError);
+          }
+          // Continue even if save fails
         }
       } catch (dbError) {
-        console.error('Database error (non-fatal):', dbError);
+        // Check if error is due to missing table
+        if (dbError instanceof Error && (dbError.message?.includes('relation') || dbError.message?.includes('does not exist'))) {
+          console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+        } else {
+          console.error('Database error (non-fatal):', dbError);
+        }
         // Continue even if save fails
       }
     }

@@ -48,15 +48,34 @@ export async function POST(request: NextRequest) {
     });
 
     // Save variation to database if designId is provided
-    if (designId) {
-      await supabase
-        .from('design_variations')
-        .insert({
-          design_id: designId,
-          image_url: editedImageUrl,
-          variation_type: 'edited',
-          prompt: optimizedPrompt,
-        });
+    if (designId && user && isSupabaseConfigured) {
+      try {
+        const { error: dbError } = await supabase
+          .from('design_variations')
+          .insert({
+            design_id: designId,
+            image_url: editedImageUrl,
+            variation_type: 'edited',
+            prompt: optimizedPrompt,
+          });
+
+        if (dbError) {
+          // Check if error is due to missing table
+          if (dbError.message?.includes('relation') || dbError.message?.includes('does not exist')) {
+            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+          } else {
+            console.error('Database error saving variation (non-fatal):', dbError);
+          }
+        }
+      } catch (dbError) {
+        // Check if error is due to missing table
+        if (dbError instanceof Error && (dbError.message?.includes('relation') || dbError.message?.includes('does not exist'))) {
+          console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+        } else {
+          console.error('Database error saving variation (non-fatal):', dbError);
+        }
+        // Continue even if save fails
+      }
     }
 
     return NextResponse.json({ 

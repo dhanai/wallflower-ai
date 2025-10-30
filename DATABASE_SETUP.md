@@ -1,3 +1,22 @@
+# Database Setup Instructions
+
+To set up the database tables in Supabase, follow these steps:
+
+## Method 1: Using Supabase SQL Editor (Recommended)
+
+1. Go to your Supabase project dashboard: https://supabase.com/dashboard
+2. Select your project
+3. Click on **SQL Editor** in the left sidebar
+4. Click **New Query**
+5. Copy and paste the entire SQL below (or from `supabase/migrations/001_initial_schema.sql` if you can access it)
+6. Click **Run** (or press Cmd/Ctrl + Enter)
+7. Verify that all tables were created successfully by checking the **Table Editor** section
+
+### Complete SQL Migration
+
+Copy and paste this entire SQL script into the Supabase SQL Editor:
+
+```sql
 -- Create users table (extends Supabase auth.users)
 CREATE TABLE IF NOT EXISTS public.users (
   id UUID REFERENCES auth.users(id) PRIMARY KEY,
@@ -149,3 +168,82 @@ CREATE TRIGGER update_orders_updated_at
   BEFORE UPDATE ON public.orders
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_updated_at();
+```
+
+## Method 2: Using Supabase CLI (Optional)
+
+If you have Supabase CLI installed:
+
+```bash
+# Link your project
+supabase link --project-ref YOUR_PROJECT_REF
+
+# Run migrations
+supabase db push
+```
+
+## Verify Tables Were Created
+
+After running the migration, verify these tables exist:
+
+- ✅ `public.users`
+- ✅ `public.designs`
+- ✅ `public.design_variations`
+- ✅ `public.orders`
+- ✅ `public.design_templates`
+
+You can check in the Supabase dashboard under **Table Editor**.
+
+## If You Already Ran the Migration Before
+
+If you already ran the migration and your users table doesn't have the INSERT policy, run this additional SQL:
+
+```sql
+-- Add INSERT policy for users table (if not already exists)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies 
+    WHERE schemaname = 'public' 
+    AND tablename = 'users' 
+    AND policyname = 'Users can create own profile'
+  ) THEN
+    CREATE POLICY "Users can create own profile" ON public.users
+      FOR INSERT WITH CHECK (auth.uid() = id);
+  END IF;
+END $$;
+```
+
+Or you can find this in `supabase/migrations/002_add_user_insert_policy.sql`.
+
+## Troubleshooting
+
+If you encounter errors:
+
+1. **"relation already exists"** - Tables may already exist. You can either:
+   - Drop existing tables first (be careful, this deletes data!)
+   - Or modify the SQL to use `DROP TABLE IF EXISTS` before `CREATE TABLE`
+
+2. **"permission denied"** - Make sure you're using the SQL Editor as a project owner/admin
+
+3. **RLS Policy errors** - If policies already exist, drop them first:
+   ```sql
+   DROP POLICY IF EXISTS "Users can view own profile" ON public.users;
+   -- Repeat for all other policies
+   ```
+
+## Fresh Start (Drop All Tables)
+
+If you need to start completely fresh:
+
+```sql
+-- Drop tables in reverse order of dependencies
+DROP TABLE IF EXISTS public.design_variations CASCADE;
+DROP TABLE IF EXISTS public.orders CASCADE;
+DROP TABLE IF EXISTS public.designs CASCADE;
+DROP TABLE IF EXISTS public.design_templates CASCADE;
+DROP TABLE IF EXISTS public.users CASCADE;
+
+-- Then run the migration file again
+```
+
