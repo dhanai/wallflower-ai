@@ -26,6 +26,23 @@ export default function DashboardSidebar({
   const [userRole, setUserRole] = useState<string | null>(initialUserRole ?? null);
   const pathname = usePathname();
 
+  // Derive a deterministic color from a string (name/email)
+  const getAvatarColor = (seed: string | null): string => {
+    const s = seed || '';
+    let hash = 0;
+    for (let i = 0; i < s.length; i++) {
+      hash = s.charCodeAt(i) + ((hash << 5) - hash);
+      hash |= 0; // Convert to 32bit integer
+    }
+    const hue = Math.abs(hash) % 360;
+    return `hsl(${hue}, 60%, 45%)`;
+  };
+
+  const getAvatarLetter = (name: string | null, email: string | null): string => {
+    const source = (name && name.trim()) || (email && email.trim()) || '';
+    return source ? source.charAt(0).toUpperCase() : '?';
+  };
+
   // Persist sidebar state between reloads and initialize CSS variable
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -52,7 +69,8 @@ export default function DashboardSidebar({
       const u = session?.user;
       if (u) {
         const meta = (u as any).user_metadata || {};
-        const picture = meta.picture || meta.avatar_url || null;
+        const rawPicture = meta.picture ?? meta.avatar_url ?? null;
+        const picture = typeof rawPicture === 'string' && rawPicture.trim().length > 0 ? rawPicture.trim() : null;
         const name = meta.name || meta.full_name || u.email?.split('@')[0] || null;
         const email = u.email ?? null;
         
@@ -60,13 +78,16 @@ export default function DashboardSidebar({
         setUserEmail(email);
         setUserAvatar(picture);
 
-        // Fetch user role
-        const { data: userData } = await supabase
-          .from('users')
-          .select('role')
-          .eq('id', u.id)
-          .single();
-        setUserRole(userData?.role || null);
+        // Fetch user role via API route
+        try {
+          const response = await fetch('/api/auth/user-role');
+          if (response.ok) {
+            const { role } = await response.json();
+            setUserRole(role || null);
+          }
+        } catch (error) {
+          console.error('Error fetching user role:', error);
+        }
       } else if (event === 'SIGNED_OUT') {
         setUserName(null);
         setUserEmail(null);
@@ -171,12 +192,25 @@ export default function DashboardSidebar({
       <div className="mt-auto px-2 pt-2">
         <Menu.Root>
           <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/10">
-            <span className="inline-flex w-8 h-8 rounded-full overflow-hidden bg-white/20 items-center justify-center">
-              {userAvatar ? (
+            <span className="inline-flex w-8 h-8 rounded-full overflow-hidden items-center justify-center">
+              {userAvatar && /^https?:\/\//.test(userAvatar) ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={userAvatar} alt="Avatar" className="w-full h-full object-cover" />
+                <img 
+                  src={userAvatar} 
+                  alt="Avatar" 
+                  className="w-full h-full object-cover" 
+                  onError={() => setUserAvatar(null)}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                />
               ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor"><path d="M320 352c88.4 0 160-71.6 160-160S408.4 32 320 32 160 103.6 160 192s71.6 160 160 160zm0 64C194.4 416 64 470.5 64 544c0 35.3 28.7 64 64 64H512c35.3 0 64-28.7 64-64c0-73.5-130.4-128-256-128z"/></svg>
+                <span
+                  className="w-full h-full flex items-center justify-center text-white font-semibold"
+                  style={{ backgroundColor: getAvatarColor(userName || userEmail) }}
+                  aria-hidden="true"
+                >
+                  {getAvatarLetter(userName, userEmail)}
+                </span>
               )}
             </span>
             {expanded && (

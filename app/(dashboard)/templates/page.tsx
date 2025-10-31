@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { ContextMenu } from '@base-ui-components/react/context-menu';
+import { AlertDialog } from '@base-ui-components/react/alert-dialog';
+import { useToast } from '@/hooks/useToast';
 
 interface Design {
   id: string;
@@ -30,11 +33,53 @@ export default function TemplatesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [contextMenuTemplateId, setContextMenuTemplateId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showAddToCollection, setShowAddToCollection] = useState(false);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
+  const [collectionTags, setCollectionTags] = useState<string>('');
+  const toast = useToast();
 
   // Flatten all designs for search/filtering
   const allDesigns = templatesByCollection.flatMap(item => 
     item.designs.map(design => ({ ...design, collectionName: item.collection.name }))
   );
+
+  // Fetch user role
+  useEffect(() => {
+    async function fetchUserRole() {
+      try {
+        const response = await fetch('/api/auth/user-role');
+        if (response.ok) {
+          const { role } = await response.json();
+          setUserRole(role || null);
+        }
+      } catch (error) {
+        console.error('Error fetching user role:', error);
+      }
+    }
+    fetchUserRole();
+  }, []);
+
+  // Load collections if admin
+  useEffect(() => {
+    if (userRole === 'admin') {
+      async function loadCollections() {
+        try {
+          const response = await fetch('/api/collections/list');
+          if (response.ok) {
+            const { collections: data } = await response.json();
+            setCollections(data || []);
+          }
+        } catch (error) {
+          console.error('Error loading collections:', error);
+        }
+      }
+      loadCollections();
+    }
+  }, [userRole]);
 
   useEffect(() => {
     // Safety timeout to prevent infinite loading
@@ -116,6 +161,75 @@ export default function TemplatesPage() {
   }).filter(item => item.designs.length > 0); // Only show collections with matching designs
 
   const totalDesigns = filteredCollections.reduce((sum, item) => sum + item.designs.length, 0);
+
+  const handleDeleteTemplate = async () => {
+    if (!contextMenuTemplateId) return;
+
+    try {
+      const response = await fetch('/api/collections/remove-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: contextMenuTemplateId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete template');
+      }
+
+      // Remove from local state - need to find and remove from the nested structure
+      setTemplatesByCollection(prev => prev.map(collection => ({
+        ...collection,
+        designs: collection.designs.filter(d => d.id !== contextMenuTemplateId),
+      })).filter(collection => collection.designs.length > 0));
+
+      toast.success('Template deleted successfully');
+      setShowDeleteConfirm(false);
+      setContextMenuTemplateId(null);
+    } catch (error: any) {
+      console.error('Error deleting template:', error);
+      toast.error(error.message || 'Failed to delete template');
+    }
+  };
+
+  const handleAddToCollection = async () => {
+    if (!contextMenuTemplateId || !selectedCollectionId) {
+      toast.error('Please select a collection');
+      return;
+    }
+
+    // For templates, we need to find the design_id from the template
+    // First, find the template in our data
+    const template = allDesigns.find(d => d.id === contextMenuTemplateId);
+    if (!template) {
+      toast.error('Template not found');
+      return;
+    }
+
+    // Templates store their image URL, but we need the original design ID
+    // Since templates are independent copies, we need to find if there's a matching design
+    // For now, we'll use the template's image URL to find/create a design entry
+    try {
+      const tags = collectionTags
+        ? collectionTags.split(',').map(t => t.trim()).filter(t => t)
+        : [];
+
+      // We'll need to create a design from the template first, then add it to collection
+      // For simplicity, let's call the add-design API with the template ID
+      // But actually, templates are in design_collections, so we need to handle this differently
+      // Let me check - templates are templates, they can't be added to another collection as-is
+      // Actually, we should copy the template to create a design, then add that design to a collection
+      // For now, let's just show an error that this needs to be done from the editor
+      toast.info('To add a template to a collection, open it in the editor and use "Save to Collection" from there.');
+      setShowAddToCollection(false);
+      setContextMenuTemplateId(null);
+      setSelectedCollectionId('');
+      setCollectionTags('');
+    } catch (error: any) {
+      console.error('Error adding to collection:', error);
+      toast.error(error.message || 'Failed to add template to collection');
+    }
+  };
 
   if (loading) {
     return (
@@ -259,19 +373,21 @@ export default function TemplatesPage() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                       {item.designs.map((design) => (
-                        <Link
-                          key={design.id}
-                          href={`/editor?design=${design.id}`}
-                          className="group relative aspect-[4/5] rounded-xl overflow-hidden bg-white/80 backdrop-blur-xl border border-gray-200 hover:shadow-2xl hover:shadow-[#7c3aed]/10 transition-all duration-300 hover:-translate-y-1"
-                        >
-                          <div className="absolute inset-0">
-                            <Image
-                              src={design.image_url}
-                              alt={design.title || 'Template'}
-                              fill
-                              className="object-cover group-hover:scale-105 transition-transform duration-500"
-                            />
-                          </div>
+                        <ContextMenu.Root key={design.id}>
+                          <ContextMenu.Trigger className="block">
+                              <Link
+                                href={`/editor?template=${design.id}`}
+                                className="group relative block w-full aspect-[4/5] rounded-xl overflow-hidden bg-white/80 backdrop-blur-xl border border-gray-200 hover:shadow-2xl hover:shadow-[#7c3aed]/10 transition-all duration-300 hover:-translate-y-1"
+                              >
+                                <div className="absolute inset-0 w-full h-full">
+                                  <Image
+                                    src={design.image_url}
+                                    alt={design.title || 'Template'}
+                                    fill
+                                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                                    className="object-cover group-hover:scale-105 transition-transform duration-500"
+                                  />
+                                </div>
                           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                             <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                               <h3 className="font-semibold text-base mb-1 truncate">
@@ -299,7 +415,29 @@ export default function TemplatesPage() {
                               )}
                             </div>
                           </div>
-                        </Link>
+                              </Link>
+                          </ContextMenu.Trigger>
+                          {userRole === 'admin' && (
+                            <ContextMenu.Portal>
+                              <ContextMenu.Positioner>
+                            <ContextMenu.Popup className="bg-white border border-gray-200 rounded-lg shadow-lg py-2 min-w-[180px]">
+                              <ContextMenu.Item
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  console.log('Delete Template clicked for template:', design.id);
+                                  setContextMenuTemplateId(design.id);
+                                  setShowDeleteConfirm(true);
+                                }}
+                                className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+                              >
+                                Delete Template
+                              </ContextMenu.Item>
+                            </ContextMenu.Popup>
+                              </ContextMenu.Positioner>
+                            </ContextMenu.Portal>
+                          )}
+                        </ContextMenu.Root>
                       ))}
                     </div>
                   </div>
@@ -309,6 +447,32 @@ export default function TemplatesPage() {
           </>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog.Root open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialog.Portal>
+          <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+          <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200">
+              <AlertDialog.Title className="text-xl font-semibold mb-2 text-[#1d1d1f]">
+                Delete Template
+              </AlertDialog.Title>
+              <AlertDialog.Description className="text-gray-600 mb-6">
+                Are you sure you want to delete this template? This action cannot be undone.
+              </AlertDialog.Description>
+              <div className="flex gap-3 justify-end">
+                <AlertDialog.Close className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                  Cancel
+                </AlertDialog.Close>
+                <button
+                  onClick={handleDeleteTemplate}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Delete Template
+                </button>
+              </div>
+            </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   );
 }

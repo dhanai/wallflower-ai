@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import Image from 'next/image';
 import Link from 'next/link';
+import { ContextMenu } from '@base-ui-components/react/context-menu';
+import { AlertDialog } from '@base-ui-components/react/alert-dialog';
+import { useToast } from '@/hooks/useToast';
+import CollectionModal from '@/components/CollectionModal';
 
 interface Design {
   id: string;
@@ -12,11 +15,39 @@ interface Design {
   created_at: string;
 }
 
+interface Collection {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export default function DesignsPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [filteredDesigns, setFilteredDesigns] = useState<Design[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [contextMenuDesignId, setContextMenuDesignId] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showAddToCollection, setShowAddToCollection] = useState(false);
+  const toast = useToast();
+
+  // Fetch user role
+  useEffect(() => {
+    async function fetchUserRole() {
+      try {
+        const response = await fetch('/api/auth/user-role');
+        if (response.ok) {
+          const { role } = await response.json();
+          setUserRole(role || null);
+        }
+      } catch (error) {
+        console.error('Error fetching user role:', error);
+      }
+    }
+    fetchUserRole();
+  }, []);
+
 
   useEffect(() => {
     // Safety timeout to prevent infinite loading
@@ -86,6 +117,34 @@ export default function DesignsPage() {
     setFilteredDesigns(filtered);
   }, [searchQuery, designs]);
 
+  const handleDeleteDesign = async () => {
+    if (!contextMenuDesignId) return;
+
+    try {
+      const response = await fetch('/api/designs/delete-design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ designId: contextMenuDesignId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete design');
+      }
+
+      // Remove from local state
+      setDesigns(prev => prev.filter(d => d.id !== contextMenuDesignId));
+      setFilteredDesigns(prev => prev.filter(d => d.id !== contextMenuDesignId));
+      toast.success('Design deleted successfully');
+      setShowDeleteConfirm(false);
+      setContextMenuDesignId(null);
+    } catch (error: any) {
+      console.error('Error deleting design:', error);
+      toast.error(error.message || 'Failed to delete design');
+    }
+  };
+
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f5f5f7] p-8">
@@ -108,18 +167,16 @@ export default function DesignsPage() {
     <div className="min-h-screen bg-[#f5f5f7] p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8 flex flex-col gap-4">
-          <div>
-            <h1 className="text-4xl md:text-4xl font-bold mb-2 tracking-tighter text-[#1d1d1f]">
-              My Designs
-            </h1>
-            <p className="text-gray-500 text-base md:text-lg">
-              {designs.length === 0 
-                ? 'Start creating AI-powered designs' 
-                : `${designs.length} ${designs.length === 1 ? 'design' : 'designs'}`}
-            </p>
-          </div>
-          {designs.length > 0 && (
+        {designs.length > 0 && (
+          <div className="mb-8 flex flex-col gap-4">
+            <div>
+              <h1 className="text-4xl md:text-4xl font-bold mb-2 tracking-tighter text-[#1d1d1f]">
+                My Designs
+              </h1>
+              <p className="text-gray-500 text-base md:text-lg">
+                {`${designs.length} ${designs.length === 1 ? 'design' : 'designs'}`}
+              </p>
+            </div>
             <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
               <div className="relative flex-1">
                 <svg 
@@ -155,11 +212,11 @@ export default function DesignsPage() {
                 Create New Design
               </Link>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {designs.length === 0 ? (
-          <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl border border-gray-200 p-12 md:p-16 text-center">
+          <div className="bg-white/80 backdrop-blur-xl rounded-2xl p-12 md:p-16 text-center h-[calc(100vh-60px)] flex items-center justify-center">
             <div className="max-w-md mx-auto">
               <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-b from-[#7c3aed] to-[#6d28d9] shadow-2xl shadow-[#7c3aed]/40 flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-12 h-12 text-white" fill="currentColor">
@@ -194,19 +251,21 @@ export default function DesignsPage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {filteredDesigns.map((design) => (
-                  <Link
-                    key={design.id}
-                    href={`/editor?design=${design.id}`}
-                    className="group relative aspect-[4/5] rounded-xl overflow-hidden bg-white/80 backdrop-blur-xl border border-gray-200 hover:shadow-2xl hover:shadow-[#7c3aed]/10 transition-all duration-300 hover:-translate-y-1"
-                  >
-                    <div className="absolute inset-0">
-                      <Image
-                        src={design.image_url}
-                        alt={design.title || 'Design'}
-                        fill
-                        className="object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                    </div>
+                  <ContextMenu.Root key={design.id}>
+                    <ContextMenu.Trigger className="block">
+                      <Link
+                        href={`/editor?design=${design.id}`}
+                        className="group relative block w-full aspect-[4/5] rounded-xl overflow-hidden bg-white/80 backdrop-blur-xl border border-gray-200 hover:shadow-2xl hover:shadow-[#7c3aed]/10 transition-all duration-300 hover:-translate-y-1"
+                      >
+                        <div className="absolute inset-0 w-full h-full">
+                          <Image
+                            src={design.image_url}
+                            alt={design.title || 'Design'}
+                            fill
+                            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                            className="object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                        </div>
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                       <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                         <h3 className="font-semibold text-base mb-1 truncate">
@@ -221,13 +280,80 @@ export default function DesignsPage() {
                         </p>
                       </div>
                     </div>
-                  </Link>
+                      </Link>
+                    </ContextMenu.Trigger>
+                    {userRole === 'admin' && (
+                      <ContextMenu.Portal>
+                        <ContextMenu.Positioner>
+                          <ContextMenu.Popup className="bg-white border border-gray-200 rounded-lg shadow-lg py-2 min-w-[180px]">
+                              <ContextMenu.Item
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  console.log('Add to Collection clicked for design:', design.id);
+                                  setContextMenuDesignId(design.id);
+                                  setShowAddToCollection(true);
+                                }}
+                                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer transition-colors"
+                              >
+                                Add to Collection
+                              </ContextMenu.Item>
+                              <ContextMenu.Item
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  console.log('Delete Design clicked for design:', design.id);
+                                  setContextMenuDesignId(design.id);
+                                  setShowDeleteConfirm(true);
+                                }}
+                                className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+                              >
+                                Delete Design
+                              </ContextMenu.Item>
+                          </ContextMenu.Popup>
+                        </ContextMenu.Positioner>
+                      </ContextMenu.Portal>
+                    )}
+                  </ContextMenu.Root>
                 ))}
               </div>
             )}
           </>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog.Root open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialog.Portal>
+          <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+          <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-gray-200">
+              <AlertDialog.Title className="text-xl font-semibold mb-2 text-[#1d1d1f]">
+                Delete Design
+              </AlertDialog.Title>
+              <AlertDialog.Description className="text-gray-600 mb-6">
+                Are you sure you want to delete this design? This action cannot be undone and will also delete all iterations.
+              </AlertDialog.Description>
+              <div className="flex gap-3 justify-end">
+                <AlertDialog.Close className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                  Cancel
+                </AlertDialog.Close>
+                <button
+                  onClick={handleDeleteDesign}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Delete Design
+                </button>
+              </div>
+            </AlertDialog.Popup>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+
+      {/* Collection Modal */}
+      <CollectionModal
+        open={showAddToCollection}
+        onOpenChange={setShowAddToCollection}
+        designId={contextMenuDesignId}
+      />
     </div>
   );
 }

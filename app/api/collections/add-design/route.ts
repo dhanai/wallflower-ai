@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
+import { uploadImageToStorage } from '@/lib/supabase/storage';
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -37,10 +38,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Collection not found' }, { status: 404 });
   }
 
-  // Verify design exists
+  // Fetch design data to store in collection
   const { data: design, error: designError } = await supabase
     .from('designs')
-    .select('id')
+    .select('title, prompt, image_url, thumbnail_image_url, aspect_ratio')
     .eq('id', designId)
     .single();
 
@@ -48,16 +49,54 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Design not found' }, { status: 404 });
   }
 
-  // Check if relationship already exists - if so, update it with new tags
+  // Upload images to Supabase Storage if they're not already there
+  let templateImageUrl = design.image_url;
+  let templateThumbnailUrl = design.thumbnail_image_url || design.image_url;
+
+  // Check if image is already in Supabase Storage or external CDN
+  const isSupabaseStorage = design.image_url?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+  const isExternalCDN = design.image_url?.startsWith('http') && !design.image_url.startsWith('data:');
+
+  if (!isSupabaseStorage && !isExternalCDN) {
+    // Upload main image to storage
+    try {
+      templateImageUrl = await uploadImageToStorage(design.image_url, 'designs', 'templates');
+      console.log('Uploaded template image to storage:', templateImageUrl);
+    } catch (error: any) {
+      console.error('Error uploading template image:', error);
+      return NextResponse.json({ error: 'Failed to upload template image to storage' }, { status: 500 });
+    }
+  }
+
+  if (design.thumbnail_image_url && design.thumbnail_image_url !== design.image_url) {
+    const isThumbnailInStorage = design.thumbnail_image_url?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+    const isThumbnailCDN = design.thumbnail_image_url?.startsWith('http') && !design.thumbnail_image_url.startsWith('data:');
+
+    if (!isThumbnailInStorage && !isThumbnailCDN) {
+      // Upload thumbnail to storage
+      try {
+        templateThumbnailUrl = await uploadImageToStorage(design.thumbnail_image_url, 'designs', 'templates');
+        console.log('Uploaded template thumbnail to storage:', templateThumbnailUrl);
+      } catch (error: any) {
+        console.error('Error uploading template thumbnail:', error);
+        // Use main image URL if thumbnail upload fails
+        templateThumbnailUrl = templateImageUrl;
+      }
+    }
+  } else {
+    templateThumbnailUrl = templateImageUrl;
+  }
+
+  // Check if template already exists in this collection (by image_url)
   const { data: existing } = await supabase
     .from('design_collections')
     .select('id, tags')
-    .eq('design_id', designId)
     .eq('collection_id', collectionId)
+    .eq('template_image_url', templateImageUrl)
     .single();
 
   if (existing) {
-    // Update existing relationship with new tags (merge with existing tags, remove duplicates)
+    // Update existing template with new tags (merge with existing tags, remove duplicates)
     const existingTags = existing.tags || [];
     const newTags = tags && Array.isArray(tags) ? tags : [];
     const mergedTags = Array.from(new Set([...existingTags, ...newTags]));
@@ -66,6 +105,11 @@ export async function POST(request: Request) {
       .from('design_collections')
       .update({
         tags: mergedTags,
+        // Also update metadata in case design changed
+        title: design.title,
+        prompt: design.prompt,
+        template_thumbnail_image_url: templateThumbnailUrl,
+        aspect_ratio: design.aspect_ratio || '1:1',
       })
       .eq('id', existing.id)
       .select()
@@ -79,12 +123,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, relationship: data, updated: true });
   }
 
-  // Create the relationship with tags
+  // Create the template in collection with design metadata
   const { data, error } = await supabase
     .from('design_collections')
     .insert({
-      design_id: designId,
       collection_id: collectionId,
+      title: design.title,
+      prompt: design.prompt,
+      template_image_url: templateImageUrl,
+      template_thumbnail_image_url: templateThumbnailUrl,
+      aspect_ratio: design.aspect_ratio || '1:1',
       tags: tags && Array.isArray(tags) ? tags : [],
     })
     .select()

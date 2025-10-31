@@ -25,10 +25,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ templatesByCollection: [] });
     }
 
-    // Fetch design-collection relationships with tags
+    // Fetch design-collection relationships with tags and template metadata
     const { data: designCollections, error: dcError } = await supabase
       .from('design_collections')
-      .select('design_id, collection_id, tags')
+      .select('id, collection_id, title, prompt, template_image_url, template_thumbnail_image_url, aspect_ratio, tags')
       .in('collection_id', collections.map(c => c.id));
 
     if (dcError) {
@@ -36,44 +36,26 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: dcError.message }, { status: 500 });
     }
 
-    // Get all unique design IDs from collections
-    const designIds = Array.from(new Set(designCollections?.map(dc => dc.design_id) || []));
-
-    if (designIds.length === 0) {
+    if (!designCollections || designCollections.length === 0) {
       return NextResponse.json({ templatesByCollection: collections.map(c => ({ collection: c, designs: [] })) });
     }
 
-    // Fetch designs with their thumbnail_image_url
-    const { data: designs, error: designsError } = await supabase
-      .from('designs')
-      .select('*')
-      .in('id', designIds);
-
-    if (designsError) {
-      console.error('Error fetching designs:', designsError);
-      return NextResponse.json({ error: designsError.message }, { status: 500 });
-    }
-
-    // Group designs by collection and include tags
+    // Group templates by collection - templates are now stored directly in design_collections
     const templatesByCollection = collections.map(collection => {
-      const collectionDesignRelations = designCollections
+      const collectionTemplates = designCollections
         ?.filter(dc => dc.collection_id === collection.id) || [];
 
-      const collectionDesignIds = collectionDesignRelations.map(dc => dc.design_id);
-
-      // Create a map of design_id to tags
-      const designTagsMap = new Map(
-        collectionDesignRelations.map(dc => [dc.design_id, dc.tags || []])
-      );
-
-      const collectionDesigns = (designs || [])
-        .filter(design => collectionDesignIds.includes(design.id))
-        .map(design => ({
-          ...design,
-          image_url: design.thumbnail_image_url || design.image_url,
-          category: collection.name, // Use collection name as category
-          tags: designTagsMap.get(design.id) || [], // Include tags from the relationship
-        }));
+      const templates = collectionTemplates.map(template => ({
+        id: (template as any).id, // Use design_collections.id as the template ID
+        title: template.title,
+        prompt: template.prompt,
+        image_url: template.template_thumbnail_image_url || template.template_image_url,
+        thumbnail_image_url: template.template_thumbnail_image_url,
+        aspect_ratio: template.aspect_ratio || '1:1',
+        category: collection.name, // Use collection name as category
+        tags: template.tags || [], // Include tags from the relationship
+        created_at: '', // Templates don't have created_at in this structure
+      }));
 
       return {
         collection: {
@@ -81,7 +63,7 @@ export async function GET(request: Request) {
           name: collection.name,
           description: collection.description,
         },
-        designs: collectionDesigns,
+        designs: templates,
       };
     }).filter(item => item.designs.length > 0); // Only include collections with designs
 

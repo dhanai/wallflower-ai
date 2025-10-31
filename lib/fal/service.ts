@@ -341,8 +341,20 @@ async function generateImageWithSeedreamV4(
 
     // Background color reinforcement
     if (options.backgroundColor) {
-      const hex = options.backgroundColor.trim();
-      finalPrompt = `${finalPrompt}, solid background color HEX ${hex}, no gradients, no patterns`;
+      const hex = options.backgroundColor.trim().toLowerCase();
+      // Convert hex to friendly color name to avoid Seedream rendering hex codes as text
+      const hexToName: Record<string, string> = {
+        '#ffffff': 'white',
+        '#000000': 'black',
+        '#808080': 'gray',
+        '#d4a017': 'mustard yellow',
+        '#1e3a8a': 'blue',
+        '#166534': 'green',
+        '#b91c1c': 'red',
+        '#db2777': 'pink',
+      };
+      const colorName = hexToName[hex] || 'solid colored';
+      finalPrompt = `${finalPrompt}, solid ${colorName} background, no gradients, no patterns, no text, no codes, no numbers`;
     }
 
     // Map aspectRatio to Seedream image_size (choose common sizes close to ratio)
