@@ -70,6 +70,61 @@ const models = [
   { label: 'Seedream V4', value: 'seedream-v4' },
 ];
 
+// Hotspot indicator component
+function HotspotIndicator({ hotspot, imageUrl, containerRef }: { hotspot: { x: number; y: number }; imageUrl: string; containerRef: React.RefObject<HTMLDivElement> }) {
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current || !imageUrl) return;
+
+    const img = new window.Image();
+    img.onload = () => {
+      if (!containerRef.current) return;
+      
+      const rect = containerRef.current.getBoundingClientRect();
+      const containerAspect = rect.width / rect.height;
+      const imageAspect = img.naturalWidth / img.naturalHeight;
+      
+      let displayWidth: number;
+      let displayHeight: number;
+      let offsetX = 0;
+      let offsetY = 0;
+      
+      if (imageAspect > containerAspect) {
+        displayWidth = rect.width;
+        displayHeight = rect.width / imageAspect;
+        offsetY = (rect.height - displayHeight) / 2;
+      } else {
+        displayHeight = rect.height;
+        displayWidth = rect.height * imageAspect;
+        offsetX = (rect.width - displayWidth) / 2;
+      }
+      
+      const relativeX = (hotspot.x / img.naturalWidth) * displayWidth + offsetX;
+      const relativeY = (hotspot.y / img.naturalHeight) * displayHeight + offsetY;
+      
+      setPosition({ x: relativeX, y: relativeY });
+    };
+    img.src = imageUrl;
+  }, [hotspot, imageUrl, containerRef]);
+
+  if (!position) return null;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none">
+      <div
+        className="absolute transform -translate-x-1/2 -translate-y-1/2"
+        style={{ left: `${position.x}px`, top: `${position.y}px` }}
+      >
+        <div className="relative">
+          <div className="w-4 h-4 rounded-full border-2 border-white bg-[#7c3aed] shadow-lg" />
+          <div className="absolute inset-0 w-6 h-6 rounded-full border-2 border-[#7c3aed] opacity-50 animate-ping -translate-x-1/2 -translate-y-1/2" style={{ left: '50%', top: '50%' }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CanvasEditor({ embedded = false }: { embedded?: boolean } = {}) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
@@ -101,10 +156,14 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const [orderQuantity, setOrderQuantity] = useState<number>(1);
   const [currentDesignId, setCurrentDesignId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteDesignConfirm, setShowDeleteDesignConfirm] = useState(false);
   const [currentIterationId, setCurrentIterationId] = useState<string | null>(null);
   const [iterationIds, setIterationIds] = useState<(string | null)[]>([]); // Maps history index to variation ID
+  const [hotspotMode, setHotspotMode] = useState(false);
+  const [hotspot, setHotspot] = useState<{ x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
   const supabase = createClient();
 
@@ -172,8 +231,18 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
 
         setImageHistory(history);
         setIterationIds(ids);
-        setHistoryIndex(history.length - 1); // Show latest iteration
-        setGeneratedImage(history[history.length - 1]);
+        
+        // Find the index of the thumbnail_image_url if it exists, otherwise show latest
+        let initialIndex = history.length - 1; // Default to latest
+        if (designData.thumbnail_image_url) {
+          const thumbnailIndex = history.findIndex(url => url === designData.thumbnail_image_url);
+          if (thumbnailIndex >= 0) {
+            initialIndex = thumbnailIndex;
+          }
+        }
+        
+        setHistoryIndex(initialIndex);
+        setGeneratedImage(history[initialIndex]);
 
         // Load prompt if available
         if (designData.prompt) {
@@ -240,9 +309,76 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
     }
   };
 
-  const handleCanvasClick = () => {
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!generatedImage) {
       canvasFileInputRef.current?.click();
+      return;
+    }
+
+    // If hotspot mode is active, capture coordinates
+    if (hotspotMode && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      
+      // Get the actual image element to calculate real pixel coordinates
+      const imgElement = canvasRef.current.querySelector('img');
+      if (imgElement && generatedImage) {
+        // Create an image to get its natural dimensions
+        const img = new window.Image();
+        img.onload = () => {
+          // Calculate the image's display size within the container
+          const containerAspect = rect.width / rect.height;
+          const imageAspect = img.naturalWidth / img.naturalHeight;
+          
+          let displayWidth: number;
+          let displayHeight: number;
+          let offsetX = 0;
+          let offsetY = 0;
+          
+          if (imageAspect > containerAspect) {
+            // Image is wider - fit to width
+            displayWidth = rect.width;
+            displayHeight = rect.width / imageAspect;
+            offsetY = (rect.height - displayHeight) / 2;
+          } else {
+            // Image is taller - fit to height
+            displayHeight = rect.height;
+            displayWidth = rect.height * imageAspect;
+            offsetX = (rect.width - displayWidth) / 2;
+          }
+          
+          // Convert click coordinates to image coordinates
+          const relativeX = clickX - offsetX;
+          const relativeY = clickY - offsetY;
+          
+          // Scale to actual image dimensions
+          const x = Math.round((relativeX / displayWidth) * img.naturalWidth);
+          const y = Math.round((relativeY / displayHeight) * img.naturalHeight);
+          
+          // Ensure coordinates are within image bounds
+          const finalX = Math.max(0, Math.min(img.naturalWidth, x));
+          const finalY = Math.max(0, Math.min(img.naturalHeight, y));
+          
+          // Store hotspot and deactivate hotspot mode
+          setHotspot({ x: finalX, y: finalY });
+          setHotspotMode(false);
+        };
+        img.onerror = () => {
+          // Fallback to canvas coordinates if image load fails
+          const x = Math.round(clickX);
+          const y = Math.round(clickY);
+          setHotspot({ x, y });
+          setHotspotMode(false);
+        };
+        img.src = generatedImage;
+      } else {
+        // Fallback to canvas coordinates
+        const x = Math.round(clickX);
+        const y = Math.round(clickY);
+        setHotspot({ x, y });
+        setHotspotMode(false);
+      }
     }
   };
 
@@ -339,6 +475,9 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
     
     setLoading(true);
     try {
+      // Use stored hotspot if available
+      const editHotspot = hotspot;
+      
       const response = await fetch('/api/designs/edit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -349,6 +488,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           noiseLevel: 0.3,
           model: selectedModel,
           referenceImageUrl: styleImage || undefined,
+          hotspot: editHotspot || undefined,
           // If we used a custom Recraft style, we need to save that ID
           // For now, we'll pass undefined as styleId for edits
         }),
@@ -361,8 +501,9 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       // Track last action for retry
       setLastPrompt(prompt);
       setLastMode('edit');
-      // Clear the prompt input after successful edit
+      // Clear the prompt input and hotspot after successful edit
       setPrompt('');
+      setHotspot(null);
     } catch (error) {
       console.error('Error editing design:', error);
       alert('Failed to edit design');
@@ -589,8 +730,15 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   };
 
   const handleDeleteIteration = async () => {
-    if (!currentIterationId || !currentDesignId) {
-      // If no iteration ID, just remove from local history
+    // Check if we're trying to delete an iteration (historyIndex > 0 means it's a variation)
+    if (historyIndex <= 0) {
+      // Can't delete the main design image, this should trigger delete design instead
+      setShowDeleteDialog(false);
+      return;
+    }
+
+    if (!currentDesignId) {
+      // If no design ID, just remove from local history (unsaved work)
       if (imageHistory.length <= 1) {
         confirmStartOver();
         setShowDeleteDialog(false);
@@ -614,19 +762,15 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       return;
     }
 
-    try {
-      const response = await fetch('/api/designs/delete-iteration', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ designId: currentDesignId, variationId: currentIterationId }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data?.error || 'Failed to delete iteration');
+    // If we have a design ID but no iteration ID, it means this iteration was never saved
+    // Just remove it from local state
+    if (!currentIterationId) {
+      if (imageHistory.length <= 1) {
+        confirmStartOver();
+        setShowDeleteDialog(false);
+        return;
       }
-
-      // Remove from local history
+      
       const newHistory = [...imageHistory];
       const newIds = [...iterationIds];
       newHistory.splice(historyIndex, 1);
@@ -640,10 +784,51 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       } else {
         setGeneratedImage(newHistory[historyIndex]);
       }
+      setShowDeleteDialog(false);
+      return;
+    }
+
+    // Delete from database
+    try {
+      console.log('Deleting iteration:', { designId: currentDesignId, variationId: currentIterationId, historyIndex });
+      
+      const response = await fetch('/api/designs/delete-iteration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ designId: currentDesignId, variationId: currentIterationId }),
+      });
+
+      const responseData = await response.json();
+      
+      if (!response.ok) {
+        console.error('Delete iteration API error:', responseData);
+        alert(`Failed to delete iteration: ${responseData?.error || 'Unknown error'}`);
+        throw new Error(responseData?.error || 'Failed to delete iteration');
+      }
+
+      console.log('Iteration deleted successfully from database');
+
+      // Update local state immediately without reloading from database
+      const newHistory = [...imageHistory];
+      const newIds = [...iterationIds];
+      newHistory.splice(historyIndex, 1);
+      newIds.splice(historyIndex, 1);
+      
+      setImageHistory(newHistory);
+      setIterationIds(newIds);
+      
+      // Adjust history index and displayed image
+      if (historyIndex >= newHistory.length) {
+        setHistoryIndex(newHistory.length - 1);
+        setGeneratedImage(newHistory[newHistory.length - 1]);
+      } else {
+        setGeneratedImage(newHistory[historyIndex]);
+      }
       
       setCurrentIterationId(null);
       setShowDeleteDialog(false);
     } catch (error: any) {
+      console.error('Error deleting iteration:', error);
       alert(error?.message || 'Failed to delete iteration');
     }
   };
@@ -670,6 +855,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       // Clear everything
       confirmStartOver();
       setShowDeleteDialog(false);
+      setShowDeleteDesignConfirm(false);
       
       // Redirect to designs page if we're viewing a design
       if (searchParams?.get('design')) {
@@ -679,6 +865,77 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       alert(error?.message || 'Failed to delete design');
     }
   };
+
+  // Track if thumbnail column exists to avoid repeated failed requests
+  const [thumbnailColumnExists, setThumbnailColumnExists] = useState<boolean | null>(null);
+
+  // Update design thumbnail when history index changes
+  useEffect(() => {
+    async function updateDesignThumbnail() {
+      if (!currentDesignId || historyIndex < 0 || imageHistory.length === 0) return;
+      
+      // Skip if we know the column doesn't exist
+      if (thumbnailColumnExists === false) return;
+      
+      const thumbnailUrl = imageHistory[historyIndex];
+      if (!thumbnailUrl) return;
+
+      try {
+        const { error } = await supabase
+          .from('designs')
+          .update({ thumbnail_image_url: thumbnailUrl })
+          .eq('id', currentDesignId);
+
+        if (error) {
+          // Check if it's a missing column error (need to add column to database)
+          if (error.message?.includes('column') || 
+              error.message?.includes('does not exist') || 
+              error.code === '42703' ||
+              error.message?.includes('thumbnail_image_url') ||
+              error.hint?.includes('thumbnail_image_url')) {
+            // Column doesn't exist - mark as non-existent and skip future attempts
+            setThumbnailColumnExists(false);
+            return;
+          } else if (error.code === 'PGRST301' || 
+                     error.message?.includes('permission denied') || 
+                     error.message?.includes('row-level security')) {
+            // RLS policy issue - silently skip
+            return;
+          } else if (error.code === '23505' || error.message?.includes('400')) {
+            // 400 Bad Request could be missing column - mark as non-existent
+            setThumbnailColumnExists(false);
+            return;
+          }
+          // Other errors - silently ignore (thumbnail update is not critical)
+        } else {
+          // Success - column exists
+          if (thumbnailColumnExists === null) {
+            setThumbnailColumnExists(true);
+          }
+        }
+      } catch (error: any) {
+        // Check if it's a missing column error
+        if (error?.message?.includes('column') || 
+            error?.message?.includes('does not exist') ||
+            error?.code === '42703') {
+          setThumbnailColumnExists(false);
+          return;
+        }
+        // Ignore other errors
+      }
+    }
+
+    // Only update if mounted and we have a valid design ID
+    if (mounted && currentDesignId && thumbnailColumnExists !== false) {
+      // Debounce updates to avoid too many database calls
+      const timeoutId = setTimeout(() => {
+        updateDesignThumbnail();
+      }, 300);
+
+      return () => clearTimeout(timeoutId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyIndex, currentDesignId, imageHistory, mounted, thumbnailColumnExists]);
 
   const canGoPrev = historyIndex > 0;
   const canGoNext = historyIndex >= 0 && historyIndex < imageHistory.length - 1;
@@ -833,9 +1090,12 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         <div className="w-full max-w-4xl h-full flex items-center justify-center">
           {/* Canvas */}
           <div 
+            ref={canvasRef}
             className={`relative border-2 rounded-2xl overflow-hidden shadow-sm transition-all ${
-              isDragging ? 'border-[#1d1d1f] border-dashed bg-gray-50' : 'border-gray-200'
-            } ${!generatedImage ? 'cursor-pointer hover:border-gray-300' : ''}`}
+              isDragging ? 'border-[#1d1d1f] border-dashed bg-gray-50' : 
+              hotspotMode ? 'border-[#7c3aed] cursor-crosshair' :
+              'border-gray-200'
+            } ${!generatedImage && !hotspotMode ? 'cursor-pointer hover:border-gray-300' : ''}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -861,6 +1121,10 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   fill
                   className="object-cover"
                 />
+                {/* Hotspot indicator */}
+                {hotspot && !hotspotMode && (
+                  <HotspotIndicator hotspot={hotspot} imageUrl={generatedImage} containerRef={canvasRef} />
+                )}
                 {(loading || mockupLoading) && (
                   <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center">
                     <svg
@@ -1106,6 +1370,10 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     if (generatedImage) {
+                      if (hotspotMode) {
+                        // If hotspot mode is active, user needs to click on image first
+                        return;
+                      }
                       handleEdit();
                     } else {
                       handleGenerate();
@@ -1140,10 +1408,20 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
 
               {/* Submit Button */}
               <button
-                onClick={generatedImage ? handleEdit : handleGenerate}
-                disabled={loading || !prompt.trim()}
+                onClick={() => {
+                  if (generatedImage) {
+                    if (hotspotMode) {
+                      // If hotspot mode is active, user needs to click on image first
+                      return;
+                    }
+                    handleEdit();
+                  } else {
+                    handleGenerate();
+                  }
+                }}
+                disabled={loading || !prompt.trim() || !!(generatedImage && hotspotMode)}
                 className="flex-shrink-0 p-2 rounded-lg bg-gradient-to-r from-[#1d1d1f] to-[#2d2d2f] text-white hover:from-[#2d2d2f] hover:to-[#3d3d3f] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                title={generatedImage ? "Apply Edit" : "Generate design"}
+                title={generatedImage && hotspotMode ? "Click on image to select area" : generatedImage ? "Apply Edit" : "Generate design"}
               >
                 {loading ? (
                   <svg
@@ -1189,6 +1467,61 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           <Tooltip.Provider>
             <div className="flex items-center justify-center relative">
               <div className="inline-flex items-stretch bg-white border border-gray-200 rounded-lg overflow-hidden divide-x divide-gray-200">
+                {/* Retry Button (1st) */}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={handleRetry}
+                      disabled={loading || !lastMode || !generatedImage}
+                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                        <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
+                      </svg>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Positioner>
+                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                        Retry
+                      </Tooltip.Popup>
+                    </Tooltip.Positioner>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+
+                {/* Crosshairs Button (2nd) */}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={() => {
+                        if (hotspotMode) {
+                          setHotspotMode(false);
+                        } else {
+                          setHotspotMode(true);
+                          setHotspot(null);
+                        }
+                      }}
+                      disabled={loading || !generatedImage}
+                      className={`px-3 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        hotspotMode 
+                          ? 'text-[#7c3aed] bg-[#7c3aed]/10 hover:bg-[#7c3aed]/20' 
+                          : 'text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100'
+                      }`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                        <path d="M320 48C337.7 48 352 62.3 352 80L352 98.3C450.1 112.3 527.7 189.9 541.7 288L560 288C577.7 288 592 302.3 592 320C592 337.7 577.7 352 560 352L541.7 352C527.7 450.1 450.1 527.7 352 541.7L352 560C352 577.7 337.7 592 320 592C302.3 592 288 577.7 288 560L288 541.7C189.9 527.7 112.3 450.1 98.3 352L80 352C62.3 352 48 337.7 48 320C48 302.3 62.3 288 80 288L98.3 288C112.3 189.9 189.9 112.3 288 98.3L288 80C288 62.3 302.3 48 320 48zM163.2 352C175.9 414.7 225.3 464.1 288 476.8L288 464C288 446.3 302.3 432 320 432C337.7 432 352 446.3 352 464L352 476.8C414.7 464.1 464.1 414.7 476.8 352L464 352C446.3 352 432 337.7 432 320C432 302.3 446.3 288 464 288L476.8 288C464.1 225.3 414.7 175.9 352 163.2L352 176C352 193.7 337.7 208 320 208C302.3 208 288 193.7 288 176L288 163.2C225.3 175.9 175.9 225.3 163.2 288L176 288C193.7 288 208 302.3 208 320C208 337.7 193.7 352 176 352L163.2 352zM320 272C346.5 272 368 293.5 368 320C368 346.5 346.5 368 320 368C293.5 368 272 346.5 272 320C272 293.5 293.5 272 320 272z"/>
+                      </svg>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Positioner>
+                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                        {hotspotMode ? 'Click on image to select area' : 'Select edit area'}
+                      </Tooltip.Popup>
+                    </Tooltip.Positioner>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+
                 <Menu.Root>
                   <Menu.Trigger
                       disabled={loading || !generatedImage}
@@ -1220,28 +1553,52 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   </Menu.Portal>
                 </Menu.Root>
 
-                <Tooltip.Root>
-                  <Tooltip.Trigger>
-                    <button
-                      onClick={handleRetry}
-                      disabled={loading || !lastMode || !generatedImage}
-                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
-                        <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
-                      </svg>
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Positioner>
-                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
-                        Retry
-                      </Tooltip.Popup>
-                    </Tooltip.Positioner>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+              {/* Upscale Button */}
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  <button
+                    onClick={async () => {
+                      if (!generatedImage) return;
+                      setLoading(true);
+                      try {
+                        const res = await fetch('/api/designs/upscale', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ designId: currentDesignId, imageUrl: generatedImage, upscaleMode: 'factor', upscaleFactor: 2, outputFormat: 'png' }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data?.error || 'Upscale failed');
+                        if (data?.imageUrl) {
+                          applyNewImage(data.imageUrl);
+                        }
+                      } catch (e: any) {
+                        alert(e?.message || 'Failed to upscale');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    disabled={loading || !generatedImage}
+                    className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {/* Upscale icon (SeedVR2) */}
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-5 h-5" width="1em" height="1em">
+                      <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5">
+                        <path d="M16 3h5v5m-4 13h2a2 2 0 0 0 2-2m0-7v3m0-12l-5 5M3 7V5a2 2 0 0 1 2-2m0 18l4.144-4.144a1.21 1.21 0 0 1 1.712 0L13 19M9 3h3"></path>
+                        <rect width="10" height="10" x="3" y="11" rx="1"></rect>
+                      </g>
+                    </svg>
+                  </button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Positioner>
+                    <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                      Upscale 2×
+                    </Tooltip.Popup>
+                  </Tooltip.Positioner>
+                </Tooltip.Portal>
+              </Tooltip.Root>
 
-              {/* Preview Button (3rd from left) */}
+              {/* Preview Button */}
               <Tooltip.Root>
                 <Tooltip.Trigger>
                   <button
@@ -1264,51 +1621,6 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                 </Tooltip.Portal>
               </Tooltip.Root>
 
-                {/* Upscale with SeedVR2 (replaces Add to Cart) */}
-                <Tooltip.Root>
-                  <Tooltip.Trigger>
-                    <button
-                      onClick={async () => {
-                        if (!generatedImage) return;
-                        setLoading(true);
-                        try {
-                          const res = await fetch('/api/designs/upscale', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ designId: currentDesignId, imageUrl: generatedImage, upscaleMode: 'factor', upscaleFactor: 2, outputFormat: 'png' }),
-                          });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data?.error || 'Upscale failed');
-                          if (data?.imageUrl) {
-                            applyNewImage(data.imageUrl);
-                          }
-                        } catch (e: any) {
-                          alert(e?.message || 'Failed to upscale');
-                        } finally {
-                          setLoading(false);
-                        }
-                      }}
-                      disabled={loading || !generatedImage}
-                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {/* Upscale icon (SeedVR2) */}
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-5 h-5" width="1em" height="1em">
-                        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5">
-                          <path d="M16 3h5v5m-4 13h2a2 2 0 0 0 2-2m0-7v3m0-12l-5 5M3 7V5a2 2 0 0 1 2-2m0 18l4.144-4.144a1.21 1.21 0 0 1 1.712 0L13 19M9 3h3"></path>
-                          <rect width="10" height="10" x="3" y="11" rx="1"></rect>
-                        </g>
-                      </svg>
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Positioner>
-                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
-                        Upscale 2×
-                      </Tooltip.Popup>
-                    </Tooltip.Positioner>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-
                 {/* Delete Button */}
                 <Tooltip.Root>
                   <Tooltip.Trigger>
@@ -1316,7 +1628,8 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                       onClick={() => {
                         // Set current iteration ID based on history index
                         // If historyIndex > 0, it's a variation (iteration), otherwise it's the main design
-                        const iterationId = historyIndex > 0 && iterationIds.length > historyIndex 
+                        // iterationIds[0] is always null (main design), iterationIds[1+] are variation IDs
+                        const iterationId = historyIndex > 0 && iterationIds.length > historyIndex && iterationIds[historyIndex] !== undefined
                           ? iterationIds[historyIndex] 
                           : null;
                         setCurrentIterationId(iterationId);
@@ -1391,10 +1704,45 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                           </AlertDialog.Close>
                         )}
                         <AlertDialog.Close 
-                          onClick={handleDeleteDesign}
+                          onClick={() => {
+                            setShowDeleteDialog(false);
+                            setShowDeleteDesignConfirm(true);
+                          }}
                           className="px-4 py-2 text-sm text-white bg-[#1d1d1f] hover:bg-[#2d2d2f] rounded-lg transition-colors"
                         >
                           Delete Design
+                        </AlertDialog.Close>
+                      </div>
+                    </AlertDialog.Popup>
+                  </AlertDialog.Portal>
+                </AlertDialog.Root>
+
+                {/* Delete Design Confirmation Dialog */}
+                <AlertDialog.Root open={showDeleteDesignConfirm} onOpenChange={setShowDeleteDesignConfirm}>
+                  <AlertDialog.Portal>
+                    <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+                    <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl p-6 max-w-md border-2 border-red-200">
+                      <AlertDialog.Title className="text-xl font-semibold text-red-600 mb-2">
+                        Delete Entire Design?
+                      </AlertDialog.Title>
+                      <AlertDialog.Description className="text-gray-600 mb-6">
+                        This will permanently delete this design and <strong>all of its iterations</strong>. This action cannot be undone.
+                      </AlertDialog.Description>
+                      <div className="flex gap-3 justify-end">
+                        <AlertDialog.Close 
+                          onClick={() => {
+                            setShowDeleteDesignConfirm(false);
+                            setShowDeleteDialog(true);
+                          }}
+                          className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                          Cancel
+                        </AlertDialog.Close>
+                        <AlertDialog.Close 
+                          onClick={handleDeleteDesign}
+                          className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                        >
+                          Yes, Delete Design
                         </AlertDialog.Close>
                       </div>
                     </AlertDialog.Popup>

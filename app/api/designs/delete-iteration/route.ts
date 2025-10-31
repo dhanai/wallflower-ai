@@ -37,21 +37,32 @@ export async function POST(request: NextRequest) {
     }
 
     // Delete the variation
-    const { error: deleteError } = await supabase
+    const { data: deletedData, error: deleteError } = await supabase
       .from('design_variations')
       .delete()
       .eq('id', variationId)
-      .eq('design_id', designId);
+      .eq('design_id', designId)
+      .select();
 
     if (deleteError) {
       console.error('Error deleting variation:', deleteError);
       return NextResponse.json(
-        { error: 'Failed to delete iteration' },
+        { error: deleteError.message || 'Failed to delete iteration' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ success: true });
+    // Check if anything was actually deleted (could be RLS policy issue)
+    if (!deletedData || deletedData.length === 0) {
+      console.warn('No variation deleted - may be due to RLS policy or variation not found');
+      return NextResponse.json(
+        { error: 'Variation not found or access denied. Make sure RLS DELETE policy exists for design_variations.' },
+        { status: 404 }
+      );
+    }
+
+    console.log('Successfully deleted variation:', variationId);
+    return NextResponse.json({ success: true, deleted: deletedData });
   } catch (error: any) {
     console.error('Error deleting iteration:', error);
     return NextResponse.json(

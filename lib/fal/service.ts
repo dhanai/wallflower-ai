@@ -22,6 +22,7 @@ export interface ImageEditOptions {
   model?: 'gemini-25' | 'recraft-v3' | 'seedream-v4';
   styleId?: string;
   referenceImageUrl?: string; // optional secondary reference/attachment
+  hotspot?: { x: number; y: number }; // optional coordinates for localized edits
 }
 
 /**
@@ -490,11 +491,27 @@ export async function editImageWithGemini25(
   options: ImageEditOptions
 ): Promise<string> {
   try {
-    // Add guardrails for conservative edits
+    // Build prompt with hotspot information if provided
     let finalPrompt = options.prompt;
-    const lower = finalPrompt.toLowerCase();
-    if (!lower.includes('minimal change') && !lower.includes('conservative') && !lower.includes('keep the rest unchanged')) {
-      finalPrompt = `${finalPrompt}. Apply a minimal, conservative change only; keep the rest unchanged. Preserve subject, composition, style, palette, typography, proportions, and layout. Do not redesign or recompose.`;
+    
+    // If hotspot is provided, add localized edit instruction
+    if (options.hotspot) {
+      finalPrompt = `You are an expert photo editor AI. Your task is to perform a natural, localized edit on the provided image based on the user's request.
+
+User Request: "${options.prompt}"
+Edit Location: Focus on the area around pixel coordinates (x: ${options.hotspot.x}, y: ${options.hotspot.y}).
+
+Editing Guidelines:
+- The edit must be realistic and blend seamlessly with the surrounding area.
+- The rest of the image (outside the immediate edit area) must remain identical to the original.
+
+Output: Return ONLY the final edited image. Do not return text.`;
+    } else {
+      // Add guardrails for conservative edits when no hotspot
+      const lower = finalPrompt.toLowerCase();
+      if (!lower.includes('minimal change') && !lower.includes('conservative') && !lower.includes('keep the rest unchanged')) {
+        finalPrompt = `${finalPrompt}. Apply a minimal, conservative change only; keep the rest unchanged. Preserve subject, composition, style, palette, typography, proportions, and layout. Do not redesign or recompose.`;
+      }
     }
 
     const imageUrls = [options.imageUrl].concat(options.referenceImageUrl ? [options.referenceImageUrl] : []);

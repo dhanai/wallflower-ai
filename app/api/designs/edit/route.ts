@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { designId, imageUrl, editPrompt, noiseLevel, model, styleId, referenceImageUrl } = body;
+    const { designId, imageUrl, editPrompt, noiseLevel, model, styleId, referenceImageUrl, hotspot } = body;
 
     if (!imageUrl || !editPrompt) {
       return NextResponse.json(
@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
       model: model || 'gemini-25',
       styleId,
       referenceImageUrl,
+      hotspot,
     });
 
     // Save variation to database if designId is provided

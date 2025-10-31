@@ -122,8 +122,8 @@ export default function DashboardSidebar({
           <Menu.Portal>
             <Menu.Positioner side="top" align="start" sideOffset={8}>
               <Menu.Popup className="bg-[#111111] text-white border border-white/10 rounded-lg shadow-xl py-1.5 min-w-[180px]">
-                <Menu.Item asChild>
-                  <Link href="/account" className="block px-3 py-1.5 text-[13px] hover:bg-white/10">Account</Link>
+                <Menu.Item className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">
+                  <Link href="/account" className="block w-full">Account</Link>
                 </Menu.Item>
                 <Menu.Separator className="my-1 h-px bg-white/10" />
                 <Menu.Item onClick={handleSignOut} className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">Sign out</Menu.Item>

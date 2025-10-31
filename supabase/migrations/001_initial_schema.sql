@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.designs (
   title TEXT,
   prompt TEXT,
   image_url TEXT NOT NULL,
+  thumbnail_image_url TEXT, -- Stores the last viewed iteration image
   style_description TEXT,
   aspect_ratio TEXT DEFAULT '1:1',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
@@ -99,6 +100,15 @@ CREATE POLICY "Users can view own design variations" ON public.design_variations
 
 CREATE POLICY "Users can create own design variations" ON public.design_variations
   FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.designs 
+      WHERE designs.id = design_variations.design_id 
+      AND designs.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can delete own design variations" ON public.design_variations
+  FOR DELETE USING (
     EXISTS (
       SELECT 1 FROM public.designs 
       WHERE designs.id = design_variations.design_id 
