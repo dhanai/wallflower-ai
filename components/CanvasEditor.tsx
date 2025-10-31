@@ -113,13 +113,30 @@ function HotspotIndicator({ hotspot, imageUrl, containerRef }: { hotspot: { x: n
   return (
     <div className="absolute inset-0 pointer-events-none">
       <div
-        className="absolute transform -translate-x-1/2 -translate-y-1/2"
-        style={{ left: `${position.x}px`, top: `${position.y}px` }}
+        className="absolute"
+        style={{ 
+          left: `${position.x}px`, 
+          top: `${position.y}px`,
+          transform: 'translate(-50%, -50%)'
+        }}
       >
-        <div className="relative">
-          <div className="w-4 h-4 rounded-full border-2 border-white bg-[#7c3aed] shadow-lg" />
-          <div className="absolute inset-0 w-6 h-6 rounded-full border-2 border-[#7c3aed] opacity-50 animate-ping -translate-x-1/2 -translate-y-1/2" style={{ left: '50%', top: '50%' }} />
-        </div>
+        {/* Pulsing ring - centered */}
+        <div 
+          className="absolute w-6 h-6 rounded-full border-2 border-[#7c3aed] animate-pulse-center"
+          style={{
+            left: '50%',
+            top: '50%'
+          }}
+        />
+        {/* Center dot - on top */}
+        <div 
+          className="absolute w-4 h-4 rounded-full border-2 border-white bg-[#7c3aed] shadow-lg"
+          style={{
+            left: '50%',
+            top: '50%',
+            transform: 'translate(-50%, -50%)'
+          }}
+        />
       </div>
     </div>
   );
@@ -174,9 +191,31 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
 
   // Load design from query parameter
   useEffect(() => {
+    if (!mounted) return;
+    
     async function loadDesign() {
       const designId = searchParams?.get('design');
-      if (!designId || designId === currentDesignId) return; // Don't reload if already loaded
+      
+      // If design parameter was removed from URL, clear workspace
+      if (!designId && currentDesignId) {
+        setGeneratedImage(null);
+        setPrompt('');
+        setStyleImage(null);
+        setImageHistory([]);
+        setIterationIds([]);
+        setHistoryIndex(-1);
+        setCurrentDesignId(null);
+        setCurrentIterationId(null);
+        setHotspot(null);
+        setHotspotMode(false);
+        return;
+      }
+      
+      // If no design ID, return (but don't clear if we're already cleared)
+      if (!designId) return;
+      
+      // If already loading this exact design, skip
+      if (designId === currentDesignId) return;
 
       try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -206,7 +245,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           return;
         }
 
-        // Set design ID
+        // Set design ID immediately to prevent duplicate loads
         setCurrentDesignId(designData.id);
 
         // Load design image and variations (ignore errors if table doesn't exist)
@@ -244,21 +283,18 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         setHistoryIndex(initialIndex);
         setGeneratedImage(history[initialIndex]);
 
-        // Load prompt if available
-        if (designData.prompt) {
-          setPrompt(designData.prompt);
-          setLastPrompt(designData.prompt);
-        }
+        // Don't populate the prompt input when loading a design
       } catch (error) {
         console.error('Error loading design:', error);
+        // Reset currentDesignId on error if we had set it, so it can retry
+        setCurrentDesignId(null);
       }
     }
 
-    if (mounted) {
-      loadDesign();
-    }
+    loadDesign();
+    // Use searchParams.toString() to detect any changes to query parameters
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, searchParams]);
+  }, [mounted, searchParams?.toString()]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1467,27 +1503,29 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           <Tooltip.Provider>
             <div className="flex items-center justify-center relative">
               <div className="inline-flex items-stretch bg-white border border-gray-200 rounded-lg overflow-hidden divide-x divide-gray-200">
-                {/* Retry Button (1st) */}
-                <Tooltip.Root>
-                  <Tooltip.Trigger>
-                    <button
-                      onClick={handleRetry}
-                      disabled={loading || !lastMode || !generatedImage}
-                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
-                        <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
-                      </svg>
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Positioner>
-                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
-                        Retry
-                      </Tooltip.Popup>
-                    </Tooltip.Positioner>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
+                {/* Retry Button (1st) - Only show for first iteration */}
+                {historyIndex === 0 && (
+                  <Tooltip.Root>
+                    <Tooltip.Trigger>
+                      <button
+                        onClick={handleRetry}
+                        disabled={loading || !lastMode || !generatedImage}
+                        className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                          <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
+                        </svg>
+                      </button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Positioner>
+                        <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                          Retry
+                        </Tooltip.Popup>
+                      </Tooltip.Positioner>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                )}
 
                 {/* Crosshairs Button (2nd) */}
                 <Tooltip.Root>

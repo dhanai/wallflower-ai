@@ -28,10 +28,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate conservative edit prompt using Gemini (only for Gemini 2.5 edits)
+    // Include imageUrl for style analysis to better preserve existing style
     let optimizedPrompt = editPrompt;
     if (!model || model === 'gemini-25') {
       try {
-        optimizedPrompt = await generateConservativeEditPrompt(editPrompt);
+        optimizedPrompt = await generateConservativeEditPrompt(editPrompt, imageUrl);
       } catch (error) {
         console.error('Error generating optimized edit prompt, using original:', error);
       }

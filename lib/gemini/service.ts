@@ -87,7 +87,8 @@ export async function generateDesignPrompt(
  * and applies only the requested localized change(s).
  */
 export async function generateConservativeEditPrompt(
-  userPrompt: string
+  userPrompt: string,
+  imageUrl?: string
 ): Promise<string> {
   const gemini = initializeGemini();
   if (!gemini) {
@@ -95,17 +96,35 @@ export async function generateConservativeEditPrompt(
   }
 
   try {
+    let styleDescription = '';
+    
+    // Analyze the existing image's style if imageUrl is provided
+    if (imageUrl) {
+      try {
+        styleDescription = await analyzeDesignStyle(imageUrl);
+      } catch (error) {
+        console.error('Error analyzing design style for edit, continuing without style analysis:', error);
+      }
+    }
+
     const systemInstruction = "You are an expert design retoucher. You apply precise, localized edits while preserving the existing composition, subject, style, palette, and typography.";
 
     let content = `Refine this t-shirt design with a conservative, localized edit: "${userPrompt}"`;
 
-    content += '\n\nRules:' +
-      '\n- Make only the minimal change necessary to satisfy the request.' +
-      '\n- Preserve subject, composition, proportions, style, color palette, textures, lighting, and typography.' +
-      "\n- Do not redesign or recompose the whole image; avoid changing pose, camera, layout, or background unless explicitly requested." +
-      '\n- Keep all elements aligned and sized consistently with the current design.' +
+    // Include style description if available
+    if (styleDescription) {
+      content += `\n\nIMPORTANT - EXISTING DESIGN STYLE:\n${styleDescription}\n\nYou MUST preserve ALL of these style characteristics: the artistic technique, rendering style, color palette, visual aesthetics, line quality, shading, textures, and overall design approach. The edited result must look like it was created by the same artist using the same style.`;
+    }
+
+    content += '\n\nEditing Rules:' +
+      '\n- Make ONLY the minimal change necessary to satisfy the user request.' +
+      '\n- CRITICALLY IMPORTANT: Match the existing style exactly - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics.' +
+      '\n- Preserve the subject, composition, proportions, style, color palette, textures, lighting, typography, and visual mood.' +
+      "\n- Do NOT redesign or recompose the whole image; avoid changing pose, camera angle, layout, or background unless explicitly requested." +
+      '\n- Keep all elements aligned, sized, and styled consistently with the current design.' +
+      '\n- The edit should seamlessly blend with the existing style - it should be impossible to tell which part was edited.' +
       '\n- Edge-to-edge output with no margins or whitespace.' +
-      '\n- Output should read as the same design, slightly adjusted.';
+      '\n- Output must read as the SAME design, with the requested change applied while maintaining perfect style consistency.';
 
     content += '\n\nReturn only the optimized prompt, no additional text.';
 
@@ -114,7 +133,7 @@ export async function generateConservativeEditPrompt(
       contents: content,
       config: {
         systemInstruction,
-        temperature: 0.5,
+        temperature: 0.3, // Lower temperature for more consistent style matching
       },
     });
 

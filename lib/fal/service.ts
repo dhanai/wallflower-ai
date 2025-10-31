@@ -400,8 +400,15 @@ async function editImageWithSeedreamV4(
   options: ImageEditOptions
 ): Promise<string> {
   try {
-    // Build prompt minimally; Seedream supports editing in unified arch (endpoint assumed)
+    // Build prompt with explicit style preservation instructions
     let finalPrompt = options.prompt;
+    const lower = finalPrompt.toLowerCase();
+    
+    // Add style preservation instructions if not already present
+    if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
+      finalPrompt = `${finalPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+    }
+    
     const input: any = {
       prompt: finalPrompt,
       image_urls: [options.imageUrl],
@@ -445,8 +452,17 @@ export async function editImageWithRecraftV3(
   options: ImageEditOptions
 ): Promise<string> {
   try {
+    // Enhance prompt with explicit style preservation instructions
+    let enhancedPrompt = options.prompt;
+    const lower = enhancedPrompt.toLowerCase();
+    
+    // Add style preservation instructions if not already present
+    if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
+      enhancedPrompt = `${enhancedPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+    }
+    
     const input: any = {
-      prompt: options.prompt,
+      prompt: enhancedPrompt,
       image_url: options.imageUrl,
       strength: options.noiseLevel ?? 0.5,
       sync_mode: true,
@@ -501,16 +517,23 @@ export async function editImageWithGemini25(
 User Request: "${options.prompt}"
 Edit Location: Focus on the area around pixel coordinates (x: ${options.hotspot.x}, y: ${options.hotspot.y}).
 
+CRITICAL STYLE PRESERVATION REQUIREMENTS:
+- Match the EXACT artistic style, rendering technique, and visual aesthetics of the existing image.
+- Preserve the same color palette, line quality, shading style, textures, and overall design approach.
+- The edited area must blend seamlessly with the surrounding area - same artistic technique and visual style.
+- The rest of the image (outside the immediate edit area) must remain IDENTICAL to the original.
+
 Editing Guidelines:
 - The edit must be realistic and blend seamlessly with the surrounding area.
-- The rest of the image (outside the immediate edit area) must remain identical to the original.
+- Apply ONLY the requested change while maintaining perfect style consistency.
+- The result should look like it was created by the same artist using the same style.
 
 Output: Return ONLY the final edited image. Do not return text.`;
     } else {
       // Add guardrails for conservative edits when no hotspot
       const lower = finalPrompt.toLowerCase();
-      if (!lower.includes('minimal change') && !lower.includes('conservative') && !lower.includes('keep the rest unchanged')) {
-        finalPrompt = `${finalPrompt}. Apply a minimal, conservative change only; keep the rest unchanged. Preserve subject, composition, style, palette, typography, proportions, and layout. Do not redesign or recompose.`;
+      if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style')) {
+        finalPrompt = `${finalPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. Apply a minimal, conservative change only; keep the rest unchanged. Preserve subject, composition, style, palette, typography, proportions, and layout. The edited result must look like it was created by the same artist using the same style. Do not redesign or recompose.`;
       }
     }
 
