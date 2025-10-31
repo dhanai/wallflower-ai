@@ -400,23 +400,63 @@ async function editImageWithSeedreamV4(
   options: ImageEditOptions
 ): Promise<string> {
   try {
-    // Build prompt with explicit style preservation instructions
+    // Build prompt with hotspot information if provided
     let finalPrompt = options.prompt;
-    const lower = finalPrompt.toLowerCase();
     
-    // Add style preservation instructions if not already present
-    if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
-      finalPrompt = `${finalPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+    // If hotspot is provided, add localized edit instruction
+    if (options.hotspot) {
+      finalPrompt = `Perform a natural, localized edit on the provided image based on the user's request.
+
+User Request: "${options.prompt}"
+Edit Location: Focus on the area around pixel coordinates (x: ${options.hotspot.x}, y: ${options.hotspot.y}).
+
+CRITICAL STYLE PRESERVATION REQUIREMENTS:
+- Match the EXACT artistic style, rendering technique, and visual aesthetics of the existing image.
+- Preserve the same color palette, line quality, shading style, textures, and overall design approach.
+- The edited area must blend seamlessly with the surrounding area - same artistic technique and visual style.
+- The rest of the image (outside the immediate edit area) must remain IDENTICAL to the original.
+
+Editing Guidelines:
+- The edit must be realistic and blend seamlessly with the surrounding area.
+- Apply ONLY the requested change while maintaining perfect style consistency.
+- The result should look like it was created by the same artist using the same style.`;
+    } else {
+      // Add style preservation instructions if not already present
+      const lower = finalPrompt.toLowerCase();
+      if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
+        finalPrompt = `${finalPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+      }
+    }
+    
+    // Fetch image dimensions to preserve aspect ratio
+    let imageSize: { width: number; height: number } | undefined;
+    try {
+      const sharp = (await import('sharp')).default;
+      const response = await fetch(options.imageUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const metadata = await sharp(buffer).metadata();
+      if (metadata.width && metadata.height) {
+        imageSize = { width: metadata.width, height: metadata.height };
+        console.log('Detected image size for Seedream edit:', imageSize);
+      }
+    } catch (error) {
+      // If Sharp fails or image can't be loaded, continue without image_size
+      console.warn('Could not detect image size for Seedream edit, using auto:', error);
     }
     
     const input: any = {
       prompt: finalPrompt,
       image_urls: [options.imageUrl],
-      // image_size is optional; Seedream will infer/scale appropriately for edits
       sync_mode: true,
       enable_safety_checker: true,
       enhance_prompt_mode: 'standard',
     };
+    
+    // Set image_size if we successfully detected it, otherwise let Seedream use auto
+    if (imageSize) {
+      input.image_size = imageSize;
+    }
 
     console.log('Calling fal.ai Seedream v4 edit with:', { prompt: finalPrompt });
 
@@ -452,13 +492,32 @@ export async function editImageWithRecraftV3(
   options: ImageEditOptions
 ): Promise<string> {
   try {
-    // Enhance prompt with explicit style preservation instructions
+    // Build prompt with hotspot information if provided
     let enhancedPrompt = options.prompt;
-    const lower = enhancedPrompt.toLowerCase();
     
-    // Add style preservation instructions if not already present
-    if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
-      enhancedPrompt = `${enhancedPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+    // If hotspot is provided, add localized edit instruction
+    if (options.hotspot) {
+      enhancedPrompt = `Perform a natural, localized edit on the provided image based on the user's request.
+
+User Request: "${options.prompt}"
+Edit Location: Focus on the area around pixel coordinates (x: ${options.hotspot.x}, y: ${options.hotspot.y}).
+
+CRITICAL STYLE PRESERVATION REQUIREMENTS:
+- Match the EXACT artistic style, rendering technique, and visual aesthetics of the existing image.
+- Preserve the same color palette, line quality, shading style, textures, and overall design approach.
+- The edited area must blend seamlessly with the surrounding area - same artistic technique and visual style.
+- The rest of the image (outside the immediate edit area) must remain IDENTICAL to the original.
+
+Editing Guidelines:
+- The edit must be realistic and blend seamlessly with the surrounding area.
+- Apply ONLY the requested change while maintaining perfect style consistency.
+- The result should look like it was created by the same artist using the same style.`;
+    } else {
+      // Add style preservation instructions if not already present
+      const lower = enhancedPrompt.toLowerCase();
+      if (!lower.includes('preserve') && !lower.includes('match') && !lower.includes('same style') && !lower.includes('existing style')) {
+        enhancedPrompt = `${enhancedPrompt}. CRITICALLY IMPORTANT: Match the EXACT existing style of the provided image - same artistic technique, rendering style, color palette, line quality, shading, textures, and visual aesthetics. The edited result must look like it was created by the same artist using the same style. Preserve all style characteristics.`;
+      }
     }
     
     const input: any = {

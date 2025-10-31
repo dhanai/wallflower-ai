@@ -17,42 +17,60 @@ export default function DesignsPage() {
   const [filteredDesigns, setFilteredDesigns] = useState<Design[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
 
   useEffect(() => {
+    // Safety timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      console.warn('Loading timeout reached, setting loading to false');
+      setLoading(false);
+    }, 10000); // 10 second timeout
+
     async function loadDesigns() {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          window.location.href = '/auth/signin';
+        console.log('Loading designs via API...');
+        
+        const response = await fetch('/api/designs/list');
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('API error:', response.status, errorData);
+          setDesigns([]);
+          setFilteredDesigns([]);
           return;
         }
-
-        const { data, error } = await supabase
-          .from('designs')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
         
-        // Use thumbnail_image_url if available, otherwise fall back to image_url
-        const designsWithThumbnails = (data || []).map(design => ({
-          ...design,
-          image_url: design.thumbnail_image_url || design.image_url,
-        }));
+        const { designs: data, error } = await response.json();
+
+        console.log('Designs received:', data?.length || 0);
         
-        setDesigns(designsWithThumbnails);
-        setFilteredDesigns(designsWithThumbnails);
+        if (error) {
+          console.error('API returned error:', error);
+          setDesigns([]);
+          setFilteredDesigns([]);
+          setLoading(false);
+          return;
+        }
+        
+        // Data is already processed by API
+        setDesigns(data || []);
+        setFilteredDesigns(data || []);
+        console.log('Designs loaded:', (data || []).length);
       } catch (error) {
         console.error('Error loading designs:', error);
+        setDesigns([]);
+        setFilteredDesigns([]);
       } finally {
+        clearTimeout(timeoutId);
         setLoading(false);
       }
     }
 
     loadDesigns();
-  }, [supabase]);
+    
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, []);
 
   // Filter designs based on search query
   useEffect(() => {

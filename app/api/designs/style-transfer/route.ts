@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { referenceImageUrl, prompt, aspectRatio } = body;
+    const { referenceImageUrl, prompt, aspectRatio, designId } = body;
 
     if (!referenceImageUrl || !prompt) {
       return NextResponse.json(
@@ -74,21 +74,62 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const { data: designData, error: dbError } = await supabase
-          .from('designs')
-          .insert({
-            user_id: user.id,
-            title: prompt.substring(0, 100),
-            prompt: optimizedPrompt,
-            image_url: newImageUrl,
-            style_description: styleDescription,
-            aspect_ratio: aspectRatio || '4:5',
-          })
-          .select()
-          .single();
+        // If designId is provided, update existing design; otherwise create new
+        if (designId) {
+          // Verify the design belongs to the user before updating
+          const { data: existingDesign, error: checkError } = await supabase
+            .from('designs')
+            .select('id, user_id')
+            .eq('id', designId)
+            .eq('user_id', user.id)
+            .single();
 
-        if (!dbError && designData) {
-          design = designData;
+          if (checkError || !existingDesign) {
+            console.error('Design not found or access denied:', checkError);
+          } else {
+            // Update existing design
+            const { data: designData, error: dbError } = await supabase
+              .from('designs')
+              .update({
+                title: prompt.substring(0, 100),
+                prompt: optimizedPrompt,
+                image_url: newImageUrl,
+                style_description: styleDescription,
+                aspect_ratio: aspectRatio || '4:5',
+                thumbnail_image_url: newImageUrl, // Update thumbnail to new image
+              })
+              .eq('id', designId)
+              .eq('user_id', user.id)
+              .select()
+              .single();
+
+            if (!dbError && designData) {
+              design = designData;
+              console.log('Design updated successfully:', designData.id);
+            } else if (dbError) {
+              console.error('Database error updating design:', dbError);
+            }
+          }
+        } else {
+          // Create new design
+          const { data: designData, error: dbError } = await supabase
+            .from('designs')
+            .insert({
+              user_id: user.id,
+              title: prompt.substring(0, 100),
+              prompt: optimizedPrompt,
+              image_url: newImageUrl,
+              style_description: styleDescription,
+              aspect_ratio: aspectRatio || '4:5',
+            })
+            .select()
+            .single();
+
+          if (!dbError && designData) {
+            design = designData;
+          } else if (dbError) {
+            console.error('Database error saving design:', dbError);
+          }
         }
       } catch (dbError) {
         console.error('Database error (non-fatal):', dbError);

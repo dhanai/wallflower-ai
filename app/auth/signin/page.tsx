@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import { useToast } from '@/hooks/useToast';
 
 export default function SignInPage() {
   const [email, setEmail] = useState('');
@@ -10,23 +11,29 @@ export default function SignInPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+  const toast = useToast();
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const response = await fetch('/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
       });
 
-      if (error) throw error;
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to sign in');
+      }
 
       router.push('/');
       router.refresh();
     } catch (error: any) {
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setLoading(false);
     }
@@ -35,14 +42,27 @@ export default function SignInPage() {
   const handleGoogleSignIn = async () => {
     try {
       setLoading(true);
+      // OAuth must be initiated from client side due to redirect flow
+      // Use window.location.origin in all cases - it will be correct for both localhost and production
+      // Only override with NEXT_PUBLIC_SITE_URL if explicitly set and we're not on localhost
+      let siteUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      
+      // Check if we're on localhost - if so, always use it
+      if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        siteUrl = window.location.origin;
+      } else {
+        // In production, use NEXT_PUBLIC_SITE_URL if set, otherwise use window.location.origin
+        siteUrl = process.env.NEXT_PUBLIC_SITE_URL || siteUrl;
+      }
+      
       await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined,
+          redirectTo: `${siteUrl}/auth/callback`,
         },
       });
     } catch (error: any) {
-      alert(error.message);
+      toast.error(error.message);
     } finally {
       setLoading(false);
     }

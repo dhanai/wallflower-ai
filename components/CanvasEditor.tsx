@@ -8,6 +8,7 @@ import { Tooltip } from '@base-ui-components/react/tooltip';
 import { Menu } from '@base-ui-components/react/menu';
 import { AlertDialog } from '@base-ui-components/react/alert-dialog';
 import { Select } from '@base-ui-components/react/select';
+import { useToast } from '@/hooks/useToast';
 
 const tshirtColors = [
   { label: 'White', hex: '#ffffff' },
@@ -142,8 +143,9 @@ function HotspotIndicator({ hotspot, imageUrl, containerRef }: { hotspot: { x: n
   );
 }
 
-export default function CanvasEditor({ embedded = false }: { embedded?: boolean } = {}) {
+export default function CanvasEditor({ embedded = false, userRole = null }: { embedded?: boolean, userRole?: string | null } = {}) {
   const router = useRouter();
+  const toast = useToast();
   const [mounted, setMounted] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [selectedStyle, setSelectedStyle] = useState<string>('');
@@ -178,6 +180,16 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const [iterationIds, setIterationIds] = useState<(string | null)[]>([]); // Maps history index to variation ID
   const [hotspotMode, setHotspotMode] = useState(false);
   const [hotspot, setHotspot] = useState<{ x: number; y: number } | null>(null);
+  const [loadingDesign, setLoadingDesign] = useState(false);
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [showCreateCollectionModal, setShowCreateCollectionModal] = useState(false);
+  const [collections, setCollections] = useState<{ id: string; name: string }[]>([]);
+  const [collectionSearchQuery, setCollectionSearchQuery] = useState('');
+  const [filteredCollections, setFilteredCollections] = useState<{ id: string; name: string }[]>([]);
+  const [newCollectionName, setNewCollectionName] = useState('');
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [savingToCollection, setSavingToCollection] = useState(false);
+  const [collectionTags, setCollectionTags] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -217,28 +229,26 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       // If already loading this exact design, skip
       if (designId === currentDesignId) return;
 
+      setLoadingDesign(true);
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        // Fetch design and its variations
-        const { data: designData, error: designError } = await supabase
-          .from('designs')
-          .select('*')
-          .eq('id', designId)
-          .eq('user_id', user.id)
-          .single();
-
-        if (designError) {
-          // Check if error is due to missing table
-          if (designError.message?.includes('relation') || designError.message?.includes('does not exist')) {
-            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
-            alert('Database tables not set up. Please run the migration in Supabase SQL Editor. See DATABASE_SETUP.md for instructions.');
+        // Use API route instead of direct Supabase client to avoid hanging
+        const response = await fetch(`/api/designs/load?designId=${designId}`);
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('Error loading design:', errorData);
+          
+          if (errorData.error?.includes('Database tables not set up')) {
+            toast.error('Database tables not set up. Please run the migration in Supabase SQL Editor. See DATABASE_SETUP.md for instructions.');
+          } else if (response.status === 404) {
+            console.error('Design not found');
           } else {
-            console.error('Error loading design:', designError);
+            console.error('Failed to load design:', errorData.error || 'Unknown error');
           }
           return;
         }
+
+        const { design: designData, variations } = await response.json();
 
         if (!designData) {
           console.error('Design not found');
@@ -248,24 +258,13 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         // Set design ID immediately to prevent duplicate loads
         setCurrentDesignId(designData.id);
 
-        // Load design image and variations (ignore errors if table doesn't exist)
-        const { data: variations, error: variationsError } = await supabase
-          .from('design_variations')
-          .select('*')
-          .eq('design_id', designId)
-          .order('created_at', { ascending: true });
-
-        if (variationsError && !variationsError.message?.includes('relation') && !variationsError.message?.includes('does not exist')) {
-          console.error('Error loading variations:', variationsError);
-        }
-
         // Build image history: [design image, ...variations]
         // Also track iteration IDs: [null, ...variation IDs] (null for design image at index 0)
         const history = [designData.image_url];
         const ids: (string | null)[] = [null]; // Index 0 is the design, no variation ID
         if (variations && Array.isArray(variations) && variations.length > 0) {
-          history.push(...variations.map((v) => v.image_url));
-          ids.push(...variations.map((v) => v.id));
+          history.push(...variations.map((v: any) => v.image_url));
+          ids.push(...variations.map((v: any) => v.id));
         }
 
         setImageHistory(history);
@@ -288,6 +287,8 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         console.error('Error loading design:', error);
         // Reset currentDesignId on error if we had set it, so it can retry
         setCurrentDesignId(null);
+      } finally {
+        setLoadingDesign(false);
       }
     }
 
@@ -421,6 +422,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
     
+    setShowSettings(false); // Close settings when submitting generate
     setLoading(true);
     setLastPrompt(prompt);
     setLastStyleImage(styleImage);
@@ -500,7 +502,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       setPrompt('');
     } catch (error) {
       console.error('Error generating design:', error);
-      alert('Failed to generate design');
+      toast.error('Failed to generate design');
     } finally {
       setLoading(false);
     }
@@ -509,6 +511,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const handleEdit = async () => {
     if (!generatedImage || !prompt.trim()) return;
     
+    setShowSettings(false); // Close settings when submitting edit
     setLoading(true);
     try {
       // Use stored hotspot if available
@@ -542,7 +545,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       setHotspot(null);
     } catch (error) {
       console.error('Error editing design:', error);
-      alert('Failed to edit design');
+      toast.error('Failed to edit design');
     } finally {
       setLoading(false);
     }
@@ -551,15 +554,24 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const handleRetry = async () => {
     if (!generatedImage && lastMode !== 'generate' && lastMode !== 'style') return;
     if (!lastMode) return;
+    setShowSettings(false); // Close settings when clicking retry
     setLoading(true);
     try {
       if (lastMode === 'edit') {
+        // For edits, retry from the previous image in history
+        const baseImageIndex = Math.max(0, historyIndex - 1);
+        const baseImage = imageHistory[baseImageIndex];
+        if (!baseImage) {
+          toast.error('Cannot retry edit: no base image found');
+          return;
+        }
+        
         const res = await fetch('/api/designs/edit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             designId: currentDesignId,
-            imageUrl: generatedImage, 
+            imageUrl: baseImage, // Use previous image as base
             editPrompt: lastPrompt, 
             noiseLevel: 0.3,
             model: lastModel,
@@ -568,7 +580,8 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         });
         const data = await res.json();
         if (data.imageUrl) {
-          applyNewImage(data.imageUrl);
+          // Replace current iteration instead of adding new one
+          replaceCurrentIteration(data.imageUrl);
         }
         return;
       }
@@ -604,6 +617,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
             aspectRatio: '4:5',
             model: lastModel,
             artStyle: lastArtStyle,
+            designId: currentDesignId || undefined, // Pass designId to update existing design when retrying
           }
         : { 
             prompt: lastPrompt, 
@@ -612,6 +626,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
             style: lastArtStyle || undefined,
             styleId: customStyleId,
             backgroundColor,
+            designId: currentDesignId || undefined, // Pass designId to update existing design when retrying
           };
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -620,15 +635,17 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       });
       const data = await res.json();
       if (data.imageUrl) {
-        applyNewImage(data.imageUrl);
-        // Store design ID from response (if new design was created)
-        if (data.design?.id) {
+        // Always replace the current iteration when retrying
+        replaceCurrentIteration(data.imageUrl);
+        // If updating an existing design (index 0), design ID stays the same
+        // Otherwise store design ID from response if new design was created
+        if (data.design?.id && historyIndex !== 0) {
           setCurrentDesignId(data.design.id);
         }
       }
     } catch (err) {
       console.error('Retry failed:', err);
-      alert('Retry failed');
+      toast.error('Retry failed');
     } finally {
       setLoading(false);
     }
@@ -637,6 +654,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
   const handleRemoveBackground = async () => {
     if (!generatedImage) return;
     
+    setShowSettings(false); // Close settings when clicking remove background
     setLoading(true);
     try {
       const response = await fetch('/api/designs/remove-background', {
@@ -653,7 +671,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       }
     } catch (error) {
       console.error('Error removing background:', error);
-      alert('Failed to remove background');
+      toast.error('Failed to remove background');
     } finally {
       setLoading(false);
     }
@@ -679,7 +697,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       }
     } catch (error) {
       console.error('Error preparing for print:', error);
-      alert('Failed to prepare design for printing');
+      toast.error('Failed to prepare design for printing');
     } finally {
       setLoading(false);
     }
@@ -687,6 +705,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
 
   const handleKnockoutBackgroundColor = async () => {
     if (!generatedImage) return;
+    setShowSettings(false); // Close settings when clicking knockout
     setLoading(true);
     try {
       const response = await fetch('/api/designs/knockout-color', {
@@ -700,7 +719,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       }
     } catch (error) {
       console.error('Error knocking out background color:', error);
-      alert('Failed to knock out background color');
+      toast.error('Failed to knock out background color');
     } finally {
       setLoading(false);
     }
@@ -708,6 +727,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
 
   const handlePreviewMockup = async () => {
     if (!generatedImage) return;
+    setShowSettings(false); // Close settings when clicking preview
     setPreviewLoading(true);
     setMockupLoading(true);
     setPreviewImageUrl(null);
@@ -726,7 +746,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       }
     } catch (err) {
       console.error('Mockup preview failed:', err);
-      alert('Failed to generate preview mockup');
+      toast.error('Failed to generate preview mockup');
     } finally {
       setPreviewLoading(false);
       setMockupLoading(false);
@@ -746,6 +766,18 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       return next;
     });
     setHistoryIndex((idx) => idx + 1);
+  };
+
+  const replaceCurrentIteration = (url: string) => {
+    setGeneratedImage(url);
+    setImageHistory((prev) => {
+      const newHistory = [...prev];
+      if (historyIndex >= 0 && historyIndex < newHistory.length) {
+        newHistory[historyIndex] = url;
+      }
+      return newHistory;
+    });
+    // Keep the same iteration ID - we're replacing, not creating new
   };
 
   const confirmStartOver = () => {
@@ -772,6 +804,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       setShowDeleteDialog(false);
       return;
     }
+    setShowSettings(false); // Close settings when clicking delete iteration
 
     if (!currentDesignId) {
       // If no design ID, just remove from local history (unsaved work)
@@ -838,7 +871,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       
       if (!response.ok) {
         console.error('Delete iteration API error:', responseData);
-        alert(`Failed to delete iteration: ${responseData?.error || 'Unknown error'}`);
+        toast.error(`Failed to delete iteration: ${responseData?.error || 'Unknown error'}`);
         throw new Error(responseData?.error || 'Failed to delete iteration');
       }
 
@@ -865,7 +898,113 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
       setShowDeleteDialog(false);
     } catch (error: any) {
       console.error('Error deleting iteration:', error);
-      alert(error?.message || 'Failed to delete iteration');
+      toast.error(error?.message || 'Failed to delete iteration');
+    }
+  };
+
+  // Load collections when modal opens
+  useEffect(() => {
+    async function loadCollections() {
+      if (!showCollectionModal) return;
+      
+      try {
+        const response = await fetch('/api/collections/list');
+        if (response.ok) {
+          const { collections: collectionsData } = await response.json();
+          setCollections(collectionsData || []);
+          setFilteredCollections(collectionsData || []);
+        }
+      } catch (error) {
+        console.error('Error loading collections:', error);
+      }
+    }
+    
+    loadCollections();
+  }, [showCollectionModal]);
+
+  // Filter collections based on search
+  useEffect(() => {
+    if (!collectionSearchQuery.trim()) {
+      setFilteredCollections(collections);
+      return;
+    }
+
+    const query = collectionSearchQuery.toLowerCase();
+    const filtered = collections.filter(collection => 
+      collection.name.toLowerCase().includes(query)
+    );
+    setFilteredCollections(filtered);
+  }, [collectionSearchQuery, collections]);
+
+  const handleCreateCollection = async () => {
+    if (!newCollectionName.trim()) return;
+
+    try {
+      const response = await fetch('/api/collections/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newCollectionName }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create collection');
+      }
+
+      // Add new collection to list and select it
+      const newCollection = { id: data.collection.id, name: data.collection.name };
+      setCollections([...collections, newCollection]);
+      setFilteredCollections([...collections, newCollection]);
+      setSelectedCollectionId(newCollection.id);
+      setNewCollectionName('');
+      setShowCreateCollectionModal(false);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to create collection');
+    }
+  };
+
+  const handleSaveToCollection = async () => {
+    if (!selectedCollectionId || !currentDesignId) {
+      toast.error('Please select a collection and ensure you have a design to save');
+      return;
+    }
+
+    // Parse tags from comma-separated string
+    const tagsArray = collectionTags
+      .split(',')
+      .map(tag => tag.trim())
+      .filter(tag => tag.length > 0);
+
+    setSavingToCollection(true);
+    try {
+      const response = await fetch('/api/collections/add-design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          collectionId: selectedCollectionId,
+          designId: currentDesignId,
+          tags: tagsArray
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save design to collection');
+      }
+
+      // Show appropriate message based on whether it was updated or created
+      if (data.updated) {
+        toast.success('Design tags updated in collection!');
+      } else {
+        toast.success('Design saved to collection successfully!');
+      }
+      setShowCollectionModal(false);
+      setSelectedCollectionId(null);
+      setCollectionTags(''); // Clear tags after saving
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save design to collection');
+    } finally {
+      setSavingToCollection(false);
     }
   };
 
@@ -898,7 +1037,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
         window.location.href = '/designs';
       }
     } catch (error: any) {
-      alert(error?.message || 'Failed to delete design');
+      toast.error(error?.message || 'Failed to delete design');
     }
   };
 
@@ -1186,7 +1325,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   </div>
                 )}
               </>
-            ) : loading ? (
+            ) : loading || loadingDesign ? (
               <div className="flex items-center justify-center h-full">
                 <svg
                   className="animate-spin h-8 w-8 text-[#1d1d1f]"
@@ -1503,35 +1642,34 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
           <Tooltip.Provider>
             <div className="flex items-center justify-center relative">
               <div className="inline-flex items-stretch bg-white border border-gray-200 rounded-lg overflow-hidden divide-x divide-gray-200">
-                {/* Retry Button (1st) - Only show for first iteration */}
-                {historyIndex === 0 && (
-                  <Tooltip.Root>
-                    <Tooltip.Trigger>
-                      <button
-                        onClick={handleRetry}
-                        disabled={loading || !lastMode || !generatedImage}
-                        className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
-                          <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
-                        </svg>
-                      </button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Portal>
-                      <Tooltip.Positioner>
-                        <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
-                          Retry
-                        </Tooltip.Popup>
-                      </Tooltip.Positioner>
-                    </Tooltip.Portal>
-                  </Tooltip.Root>
-                )}
+                {/* Retry/Try Again Button (1st) - Available on all iterations */}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={handleRetry}
+                      disabled={loading || !lastMode || !generatedImage}
+                      className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                        <path d="M552 256L408 256C398.3 256 389.5 250.2 385.8 241.2C382.1 232.2 384.1 221.9 391 215L437.7 168.3C362.4 109.7 253.4 115 184.2 184.2C109.2 259.2 109.2 380.7 184.2 455.7C259.2 530.7 380.7 530.7 455.7 455.7C463.9 447.5 471.2 438.8 477.6 429.6C487.7 415.1 507.7 411.6 522.2 421.7C536.7 431.8 540.2 451.8 530.1 466.3C521.6 478.5 511.9 490.1 501 501C401 601 238.9 601 139 501C39.1 401 39 239 139 139C233.3 44.7 382.7 39.4 483.3 122.8L535 71C541.9 64.1 552.2 62.1 561.2 65.8C570.2 69.5 576 78.3 576 88L576 232C576 245.3 565.3 256 552 256z"/>
+                      </svg>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Positioner>
+                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                        Try Again
+                      </Tooltip.Popup>
+                    </Tooltip.Positioner>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
 
                 {/* Crosshairs Button (2nd) */}
                 <Tooltip.Root>
                   <Tooltip.Trigger>
                     <button
                       onClick={() => {
+                        setShowSettings(false); // Close settings when clicking crosshair
                         if (hotspotMode) {
                           setHotspotMode(false);
                         } else {
@@ -1563,6 +1701,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                 <Menu.Root>
                   <Menu.Trigger
                       disabled={loading || !generatedImage}
+                      onClick={() => setShowSettings(false)} // Close settings when clicking eraser menu
                       className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
@@ -1597,6 +1736,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   <button
                     onClick={async () => {
                       if (!generatedImage) return;
+                      setShowSettings(false); // Close settings when clicking upscale
                       setLoading(true);
                       try {
                         const res = await fetch('/api/designs/upscale', {
@@ -1610,7 +1750,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                           applyNewImage(data.imageUrl);
                         }
                       } catch (e: any) {
-                        alert(e?.message || 'Failed to upscale');
+                        toast.error(e?.message || 'Failed to upscale');
                       } finally {
                         setLoading(false);
                       }
@@ -1690,6 +1830,37 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                     </Tooltip.Positioner>
                   </Tooltip.Portal>
                 </Tooltip.Root>
+
+                {/* Save to Collection Button (Admin Only) */}
+                {userRole === 'admin' && (
+                  <Tooltip.Root>
+                    <Tooltip.Trigger>
+                      <button
+                        onClick={() => {
+                          if (!currentDesignId) {
+                            toast.warning('Please save your design first before adding it to a collection');
+                            return;
+                          }
+                          setShowCollectionModal(true);
+                        }}
+                        disabled={loading || !generatedImage || !currentDesignId}
+                        className="px-3 py-2 text-gray-700 hover:text-[#7c3aed] hover:bg-[#7c3aed]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none"
+                        title="Save to Collection"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                          <path d="M160 96C124.7 96 96 124.7 96 160L96 480C96 515.3 124.7 544 160 544L480 544C515.3 544 544 515.3 544 480L544 237.3C544 220.3 537.3 204 525.3 192L448 114.7C436 102.7 419.7 96 402.7 96L160 96zM192 192C192 174.3 206.3 160 224 160L384 160C401.7 160 416 174.3 416 192L416 256C416 273.7 401.7 288 384 288L224 288C206.3 288 192 273.7 192 256L192 192zM320 352C355.3 352 384 380.7 384 416C384 451.3 355.3 480 320 480C284.7 480 256 451.3 256 416C256 380.7 284.7 352 320 352z"/>
+                        </svg>
+                      </button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Positioner>
+                        <Tooltip.Popup className="bg-[#1d1d1f] text-white text-xs px-3 py-1.5 rounded-lg shadow-lg">
+                          Save to Collection
+                        </Tooltip.Popup>
+                      </Tooltip.Positioner>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                )}
 
                 <AlertDialog.Root open={showStartOverDialog} onOpenChange={setShowStartOverDialog}>
                   <AlertDialog.Portal>
@@ -1823,6 +1994,164 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                     </AlertDialog.Popup>
                   </AlertDialog.Portal>
                 </AlertDialog.Root>
+
+                {/* Collection Selection Modal */}
+                <AlertDialog.Root open={showCollectionModal} onOpenChange={setShowCollectionModal}>
+                  <AlertDialog.Portal>
+                    <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+                    <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl p-6 max-w-md w-full max-h-[80vh] flex flex-col">
+                      <div className="flex items-center justify-between mb-4">
+                        <AlertDialog.Title className="text-xl font-semibold text-[#1d1d1f]">
+                          Collections
+                        </AlertDialog.Title>
+                        <AlertDialog.Close className="p-2 text-gray-600 hover:text-[#1d1d1f] hover:bg-gray-100 rounded-lg">✕</AlertDialog.Close>
+                      </div>
+
+                      {/* Search Bar */}
+                      <div className="relative mb-4">
+                        <svg 
+                          xmlns="http://www.w3.org/2000/svg" 
+                          viewBox="0 0 512 512" 
+                          className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+                          fill="currentColor"
+                        >
+                          <path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352a144 144 0 1 0 0-288 144 144 0 1 0 0 288z"/>
+                        </svg>
+                        <input
+                          type="text"
+                          placeholder="Search collections..."
+                          value={collectionSearchQuery}
+                          onChange={(e) => setCollectionSearchQuery(e.target.value)}
+                          className="w-full pl-10 pr-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all text-[#1d1d1f] placeholder-gray-400"
+                        />
+                      </div>
+
+                      {/* Add New Collection Button */}
+                      <button
+                        onClick={() => setShowCreateCollectionModal(true)}
+                        className="flex items-center gap-2 px-3 py-2 mb-4 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-sm font-medium text-[#1d1d1f]"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor">
+                          <path d="M320 48C337.7 48 352 62.3 352 80L352 288L560 288C577.7 288 592 302.3 592 320C592 337.7 577.7 352 560 352L352 352L352 560C352 577.7 337.7 592 320 592C302.3 592 288 577.7 288 560L288 352L80 352C62.3 352 48 337.7 48 320C48 302.3 62.3 288 80 288L288 288L288 80C288 62.3 302.3 48 320 48z"/>
+                        </svg>
+                        Add new collection
+                      </button>
+
+                      {/* Collections List */}
+                      <div className="flex-1 overflow-y-auto space-y-1 mb-4">
+                        {filteredCollections.length === 0 ? (
+                          <div className="text-center py-8 text-gray-500 text-sm">
+                            {collectionSearchQuery ? 'No collections found' : 'No collections yet'}
+                          </div>
+                        ) : (
+                          filteredCollections.map((collection) => (
+                            <button
+                              key={collection.id}
+                              onClick={() => setSelectedCollectionId(collection.id)}
+                              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-left ${
+                                selectedCollectionId === collection.id
+                                  ? 'bg-[#7c3aed]/10 text-[#7c3aed]'
+                                  : 'hover:bg-gray-100 text-[#1d1d1f]'
+                              }`}
+                            >
+                              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
+                                selectedCollectionId === collection.id
+                                  ? 'border-[#7c3aed] bg-[#7c3aed]'
+                                  : 'border-gray-300'
+                              }`}>
+                                {selectedCollectionId === collection.id && (
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-3 h-3 text-white" fill="currentColor">
+                                    <path d="M558.6 70.6C542.4 54.4 520 48 497 48C474 48 451.6 54.4 435.4 70.6L288 218L204.6 134.6C188.4 118.4 166 112 143 112C120 112 97.6 118.4 81.4 134.6C49 167 49 218.2 81.4 250.6L190.6 359.8C206.8 376 229.2 382.4 252.2 382.4C275.2 382.4 297.6 376 313.8 359.8L558.6 115C574.8 98.8 574.8 70.6 558.6 70.6z"/>
+                                  </svg>
+                                )}
+                              </div>
+                              <span className="text-sm font-medium">{collection.name}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Tags Input */}
+                      {selectedCollectionId && (
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-[#1d1d1f] mb-2">
+                            Tags (comma-separated)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g., spooky, halloween, family, costume"
+                            value={collectionTags}
+                            onChange={(e) => setCollectionTags(e.target.value)}
+                            className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all text-[#1d1d1f] placeholder-gray-400 text-sm"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Add tags to make this design easier to find when searching
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+                        <AlertDialog.Close className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                          Cancel
+                        </AlertDialog.Close>
+                        <button
+                          onClick={handleSaveToCollection}
+                          disabled={!selectedCollectionId || savingToCollection}
+                          className="px-4 py-2 text-sm text-white bg-[#7c3aed] hover:bg-[#6d28d9] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {savingToCollection ? 'Saving...' : 'Save'}
+                        </button>
+                      </div>
+                    </AlertDialog.Popup>
+                  </AlertDialog.Portal>
+                </AlertDialog.Root>
+
+                {/* Create Collection Modal */}
+                <AlertDialog.Root open={showCreateCollectionModal} onOpenChange={setShowCreateCollectionModal}>
+                  <AlertDialog.Portal>
+                    <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
+                    <AlertDialog.Popup className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl p-6 max-w-md">
+                      <div className="flex items-center justify-between mb-4">
+                        <AlertDialog.Title className="text-xl font-semibold text-[#1d1d1f]">
+                          Create Collection
+                        </AlertDialog.Title>
+                        <AlertDialog.Close className="p-2 text-gray-600 hover:text-[#1d1d1f] hover:bg-gray-100 rounded-lg">✕</AlertDialog.Close>
+                      </div>
+
+                      <AlertDialog.Description className="text-gray-600 mb-4">
+                        Enter a name for your new collection.
+                      </AlertDialog.Description>
+
+                      <input
+                        type="text"
+                        placeholder="Collection name"
+                        value={newCollectionName}
+                        onChange={(e) => setNewCollectionName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newCollectionName.trim()) {
+                            handleCreateCollection();
+                          }
+                        }}
+                        className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed] focus:border-transparent transition-all text-[#1d1d1f] placeholder-gray-400 mb-4"
+                        autoFocus
+                      />
+
+                      <div className="flex gap-3 justify-end">
+                        <AlertDialog.Close className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                          Cancel
+                        </AlertDialog.Close>
+                        <AlertDialog.Close
+                          onClick={handleCreateCollection}
+                          disabled={!newCollectionName.trim()}
+                          className="px-4 py-2 text-sm text-white bg-[#7c3aed] hover:bg-[#6d28d9] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Create
+                        </AlertDialog.Close>
+                      </div>
+                    </AlertDialog.Popup>
+                  </AlertDialog.Portal>
+                </AlertDialog.Root>
               </div>
               </div>
             </Tooltip.Provider>
@@ -1953,7 +2282,7 @@ export default function CanvasEditor({ embedded = false }: { embedded?: boolean 
                   // TODO: Complete order functionality
                   const totalPrice = 13 * orderQuantity;
                   console.log('Complete order:', { productType: orderProductType, size: orderSize, quantity: orderQuantity, price: totalPrice });
-                  alert('Order functionality coming soon!');
+                  toast.info('Order functionality coming soon!');
                 }}
                 className="w-full px-4 py-2.5 bg-[#1d1d1f] text-white rounded-lg hover:bg-[#2d2d2f] transition-colors text-sm font-medium"
               >

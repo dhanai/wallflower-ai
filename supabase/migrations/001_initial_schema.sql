@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   email TEXT,
   full_name TEXT,
   avatar_url TEXT,
+  role TEXT DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
@@ -128,8 +129,10 @@ CREATE POLICY "Anyone can view design templates" ON public.design_templates
   FOR SELECT USING (true);
 
 -- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 CREATE INDEX IF NOT EXISTS idx_designs_user_id ON public.designs(user_id);
 CREATE INDEX IF NOT EXISTS idx_designs_created_at ON public.designs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_designs_updated_at ON public.designs(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_design_variations_design_id ON public.design_variations(design_id);
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON public.orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(status);

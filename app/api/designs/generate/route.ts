@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     }
 
           const body = await request.json();
-          const { prompt, aspectRatio, referenceImageUrl, artStyle, model, style, styleId, backgroundColor } = body;
+          const { prompt, aspectRatio, referenceImageUrl, artStyle, model, style, styleId, backgroundColor, designId } = body;
 
           if (!prompt) {
             return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -68,29 +68,67 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const { data: designData, error: dbError } = await supabase
-          .from('designs')
-          .insert({
-            user_id: user.id,
-            title: prompt.substring(0, 100),
-            prompt: optimizedPrompt,
-            image_url: imageUrl,
-            aspect_ratio: aspectRatio || '4:5',
-          })
-          .select()
-          .single();
+        // If designId is provided, update existing design; otherwise create new
+        if (designId) {
+          // Verify the design belongs to the user before updating
+          const { data: existingDesign, error: checkError } = await supabase
+            .from('designs')
+            .select('id, user_id')
+            .eq('id', designId)
+            .eq('user_id', user.id)
+            .single();
 
-        if (!dbError && designData) {
-          design = designData;
-          console.log('Design saved successfully:', designData.id);
-        } else if (dbError) {
-          // Check if error is due to missing table
-          if (dbError.message?.includes('relation') || dbError.message?.includes('does not exist')) {
-            console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+          if (checkError || !existingDesign) {
+            console.error('Design not found or access denied:', checkError);
           } else {
-            console.error('Database error saving design:', dbError);
+            // Update existing design
+            const { data: designData, error: dbError } = await supabase
+              .from('designs')
+              .update({
+                title: prompt.substring(0, 100),
+                prompt: optimizedPrompt,
+                image_url: imageUrl,
+                aspect_ratio: aspectRatio || '4:5',
+                thumbnail_image_url: imageUrl, // Update thumbnail to new image
+              })
+              .eq('id', designId)
+              .eq('user_id', user.id)
+              .select()
+              .single();
+
+            if (!dbError && designData) {
+              design = designData;
+              console.log('Design updated successfully:', designData.id);
+            } else if (dbError) {
+              console.error('Database error updating design:', dbError);
+            }
           }
-          // Continue even if save fails
+        } else {
+          // Create new design
+          const { data: designData, error: dbError } = await supabase
+            .from('designs')
+            .insert({
+              user_id: user.id,
+              title: prompt.substring(0, 100),
+              prompt: optimizedPrompt,
+              image_url: imageUrl,
+              aspect_ratio: aspectRatio || '4:5',
+            })
+            .select()
+            .single();
+
+          if (!dbError && designData) {
+            design = designData;
+            console.log('Design saved successfully:', designData.id);
+          } else if (dbError) {
+            // Check if error is due to missing table
+            if (dbError.message?.includes('relation') || dbError.message?.includes('does not exist')) {
+              console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
+            } else {
+              console.error('Database error saving design:', dbError);
+            }
+            // Continue even if save fails
+          }
         }
       } catch (dbError) {
         // Check if error is due to missing table
