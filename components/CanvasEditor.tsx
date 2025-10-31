@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Tooltip } from '@base-ui-components/react/tooltip';
@@ -70,6 +70,81 @@ const models = [
   { label: 'Recraft V3', value: 'recraft-v3' },
   { label: 'Seedream V4', value: 'seedream-v4' },
 ];
+
+const FONT_OPTIONS = [
+  { label: 'Inter', value: 'Inter', stack: 'Inter, sans-serif' },
+  { label: 'Abril Fatface', value: 'Abril Fatface', stack: '"Abril Fatface", cursive' },
+  { label: 'Alfa Slab One', value: 'Alfa Slab One', stack: '"Alfa Slab One", cursive' },
+  { label: 'Creepster', value: 'Creepster', stack: '"Creepster", cursive' },
+  { label: 'Permanent Marker', value: 'Permanent Marker', stack: '"Permanent Marker", cursive' },
+  { label: 'Archivo', value: 'Archivo', stack: 'Archivo, sans-serif' },
+];
+
+type TextLayer = {
+  id: string;
+  text: string;
+  x: number; // 0-1 relative to canvas width
+  y: number; // 0-1 relative to canvas height
+  width: number; // 0-1 relative to canvas width
+  height: number; // 0-1 relative to canvas height
+  rotation: number; // degrees
+  fontFamily: string;
+  fontSize: number; // relative to canvas height
+  fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
+  underline: boolean;
+  textAlign: 'left' | 'center' | 'right';
+  color: string;
+  letterSpacing: number; // relative to canvas width
+};
+
+type ResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+type TransformSession =
+  | {
+      type: 'move';
+      pointerId: number;
+      layerId: string;
+      startX: number;
+      startY: number;
+      initialX: number;
+      initialY: number;
+      initialWidth: number;
+      initialHeight: number;
+      moved: boolean;
+    }
+  | {
+      type: 'resize';
+      pointerId: number;
+      layerId: string;
+      corner: ResizeCorner;
+      startX: number;
+      startY: number;
+      initialX: number;
+      initialY: number;
+      initialWidth: number;
+      initialHeight: number;
+      initialFontSize: number;
+      moved: boolean;
+    }
+  | {
+      type: 'rotate';
+      pointerId: number;
+      layerId: string;
+      center: { x: number; y: number };
+      startAngle: number;
+      initialRotation: number;
+    };
+
+const MIN_TEXT_WIDTH_PX = 40;
+const MIN_TEXT_HEIGHT_PX = 24;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const getFontStack = (fontFamily: string) => {
+  const option = FONT_OPTIONS.find((font) => font.value === fontFamily);
+  return option?.stack || `${fontFamily}, sans-serif`;
+};
 
 // Hotspot indicator component
 function HotspotIndicator({ hotspot, imageUrl, containerRef }: { hotspot: { x: number; y: number }; imageUrl: string; containerRef: React.RefObject<HTMLDivElement> }) {
@@ -182,14 +257,461 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const [hotspot, setHotspot] = useState<{ x: number; y: number } | null>(null);
   const [loadingDesign, setLoadingDesign] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [textLayers, setTextLayers] = useState<TextLayer[]>([]);
+  const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [hoveredTextId, setHoveredTextId] = useState<string | null>(null);
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
+  const textElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const textWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const textToolbarRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const canvasRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
+  const transformSession = useRef<TransformSession | null>(null);
+  const textLayersRef = useRef<TextLayer[]>(textLayers);
+  const canvasSizeRef = useRef(canvasSize);
+  const editingTextIdRef = useRef<string | null>(editingTextId);
+
+  const updateCanvasDimensions = useCallback(() => {
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    if (rect.width && rect.height) {
+      setCanvasSize({ width: rect.width, height: rect.height });
+    }
+  }, []);
+
+  useEffect(() => {
+    textLayersRef.current = textLayers;
+  }, [textLayers]);
+
+  useEffect(() => {
+    canvasSizeRef.current = canvasSize;
+  }, [canvasSize]);
+
+  useEffect(() => {
+    editingTextIdRef.current = editingTextId;
+  }, [editingTextId]);
+
+  const updateTextLayer = useCallback(
+    (id: string, updates: Partial<TextLayer>) => {
+      setTextLayers((prev) =>
+        prev.map((layer) => (layer.id === id ? { ...layer, ...updates } : layer))
+      );
+    },
+    []
+  );
+
+  const removeTextLayer = useCallback((id: string) => {
+    setTextLayers((prev) => prev.filter((layer) => layer.id !== id));
+    setActiveTextId((current) => (current === id ? null : current));
+    setEditingTextId((current) => (current === id ? null : current));
+  }, []);
+
+  const addTextLayer = useCallback(() => {
+    if (!canvasRef.current) return;
+    updateCanvasDimensions();
+    const { width, height } = canvasSizeRef.current;
+    if (!width || !height) return;
+
+    const id = crypto?.randomUUID ? crypto.randomUUID() : `text-${Date.now()}`;
+    const layerWidth = Math.min(0.6, 320 / width);
+    const layerHeight = Math.min(0.2, 120 / height);
+
+    const newLayer: TextLayer = {
+      id,
+      text: 'Add text here',
+      x: Math.max(0, (1 - layerWidth) / 2),
+      y: Math.max(0, (1 - layerHeight) / 2),
+      width: layerWidth,
+      height: layerHeight,
+      rotation: 0,
+      fontFamily: 'Inter',
+      fontSize: 0.08,
+      fontWeight: 'bold',
+      fontStyle: 'normal',
+      underline: false,
+      textAlign: 'center',
+      color: '#1d1d1f',
+      letterSpacing: 0,
+    };
+
+    setTextLayers((prev) => [...prev, newLayer]);
+    setActiveTextId(id);
+    setEditingTextId(id);
+    setHoveredTextId(id);
+    setShowSettings(false);
+    setHotspotMode(false);
+  }, [updateCanvasDimensions, setShowSettings, setHotspotMode]);
+
+  const startMoveSession = useCallback(
+    (layerId: string, event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      const { width, height } = canvasSizeRef.current;
+      if (!width || !height) return;
+
+      const layer = textLayersRef.current.find((item) => item.id === layerId);
+      if (!layer) return;
+      if (editingTextIdRef.current === layerId) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const initialX = layer.x * width;
+      const initialY = layer.y * height;
+      const initialWidth = layer.width * width;
+      const initialHeight = layer.height * height;
+
+      transformSession.current = {
+        type: 'move',
+        pointerId: event.pointerId,
+        layerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        initialX,
+        initialY,
+        initialWidth,
+        initialHeight,
+        moved: false,
+      };
+
+      setActiveTextId(layerId);
+      setEditingTextId((prev) => (prev && prev !== layerId ? null : prev));
+      document.body.style.cursor = 'grab';
+    },
+    [setActiveTextId, setEditingTextId]
+  );
+
+  const startResizeSession = useCallback(
+    (layerId: string, corner: ResizeCorner, event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const { width, height } = canvasSizeRef.current;
+      if (!width || !height) return;
+      const layer = textLayersRef.current.find((item) => item.id === layerId);
+      if (!layer) return;
+
+      const initialX = layer.x * width;
+      const initialY = layer.y * height;
+      const initialWidth = layer.width * width;
+      const initialHeight = layer.height * height;
+
+      transformSession.current = {
+        type: 'resize',
+        pointerId: event.pointerId,
+        layerId,
+        corner,
+        startX: event.clientX,
+        startY: event.clientY,
+        initialX,
+        initialY,
+        initialWidth,
+        initialHeight,
+        initialFontSize: layer.fontSize,
+        moved: false,
+      };
+
+      setActiveTextId(layerId);
+      setEditingTextId(null);
+      document.body.style.cursor = 'nwse-resize';
+    },
+    [setActiveTextId, setEditingTextId]
+  );
+
+  const startRotateSession = useCallback(
+    (layerId: string, event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const layer = textLayersRef.current.find((item) => item.id === layerId);
+      if (!layer) return;
+
+      const wrapper = textWrapperRefs.current[layerId];
+      if (!wrapper) return;
+
+      const rect = wrapper.getBoundingClientRect();
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const startAngle = Math.atan2(event.clientY - center.y, event.clientX - center.x);
+
+      transformSession.current = {
+        type: 'rotate',
+        pointerId: event.pointerId,
+        layerId,
+        center,
+        startAngle,
+        initialRotation: layer.rotation,
+      };
+
+      setActiveTextId(layerId);
+      setEditingTextId(null);
+      document.body.style.cursor = 'grab';
+    },
+    [setActiveTextId, setEditingTextId]
+  );
 
   // Prevent hydration mismatches
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (!canvasRef.current) return;
+
+    updateCanvasDimensions();
+
+    const observer = new ResizeObserver(() => {
+      updateCanvasDimensions();
+    });
+    observer.observe(canvasRef.current);
+
+    return () => observer.disconnect();
+  }, [mounted, updateCanvasDimensions, generatedImage]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const session = transformSession.current;
+      if (!session) return;
+      if (event.pointerId !== session.pointerId) return;
+
+      const { width: canvasWidth, height: canvasHeight } = canvasSizeRef.current;
+      if (!canvasWidth || !canvasHeight) return;
+
+      if (session.type === 'move') {
+        const deltaX = event.clientX - session.startX;
+        const deltaY = event.clientY - session.startY;
+
+        if (!session.moved && Math.hypot(deltaX, deltaY) > 2) {
+          session.moved = true;
+        }
+
+        const newXpx = clamp(session.initialX + deltaX, 0, canvasWidth - session.initialWidth);
+        const newYpx = clamp(session.initialY + deltaY, 0, canvasHeight - session.initialHeight);
+
+        const newX = newXpx / canvasWidth;
+        const newY = newYpx / canvasHeight;
+
+        setTextLayers((prev) =>
+          prev.map((layer) =>
+            layer.id === session.layerId
+              ? {
+                  ...layer,
+                  x: newX,
+                  y: newY,
+                }
+              : layer
+          )
+        );
+        document.body.style.cursor = 'grabbing';
+      } else if (session.type === 'resize') {
+        const deltaX = event.clientX - session.startX;
+        const deltaY = event.clientY - session.startY;
+
+        if (!session.moved && Math.hypot(deltaX, deltaY) > 2) {
+          session.moved = true;
+        }
+
+        let widthPx = session.initialWidth;
+        let heightPx = session.initialHeight;
+        let xPx = session.initialX;
+        let yPx = session.initialY;
+
+        switch (session.corner) {
+          case 'top-left':
+            widthPx = session.initialWidth - deltaX;
+            heightPx = session.initialHeight - deltaY;
+            xPx = session.initialX + deltaX;
+            yPx = session.initialY + deltaY;
+            break;
+          case 'top-right':
+            widthPx = session.initialWidth + deltaX;
+            heightPx = session.initialHeight - deltaY;
+            yPx = session.initialY + deltaY;
+            break;
+          case 'bottom-left':
+            widthPx = session.initialWidth - deltaX;
+            heightPx = session.initialHeight + deltaY;
+            xPx = session.initialX + deltaX;
+            break;
+          case 'bottom-right':
+            widthPx = session.initialWidth + deltaX;
+            heightPx = session.initialHeight + deltaY;
+            break;
+        }
+
+        // Clamp dimensions and position
+        if (widthPx < MIN_TEXT_WIDTH_PX) {
+          if (session.corner === 'top-left' || session.corner === 'bottom-left') {
+            xPx += widthPx - MIN_TEXT_WIDTH_PX;
+          }
+          widthPx = MIN_TEXT_WIDTH_PX;
+        }
+        if (heightPx < MIN_TEXT_HEIGHT_PX) {
+          if (session.corner === 'top-left' || session.corner === 'top-right') {
+            yPx += heightPx - MIN_TEXT_HEIGHT_PX;
+          }
+          heightPx = MIN_TEXT_HEIGHT_PX;
+        }
+
+        xPx = clamp(xPx, 0, canvasWidth - widthPx);
+        yPx = clamp(yPx, 0, canvasHeight - heightPx);
+        widthPx = clamp(widthPx, MIN_TEXT_WIDTH_PX, canvasWidth - xPx);
+        heightPx = clamp(heightPx, MIN_TEXT_HEIGHT_PX, canvasHeight - yPx);
+
+        const widthRatio = widthPx / canvasWidth;
+        const heightRatio = heightPx / canvasHeight;
+        const xRatio = xPx / canvasWidth;
+        const yRatio = yPx / canvasHeight;
+
+        const heightScale = heightPx / session.initialHeight;
+        const nextFontSize = clamp(session.initialFontSize * heightScale, 0.01, 1);
+
+        setTextLayers((prev) =>
+          prev.map((layer) =>
+            layer.id === session.layerId
+              ? {
+                  ...layer,
+                  x: xRatio,
+                  y: yRatio,
+                  width: widthRatio,
+                  height: heightRatio,
+                  fontSize: nextFontSize,
+                }
+              : layer
+          )
+        );
+        document.body.style.cursor = 'nwse-resize';
+      } else if (session.type === 'rotate') {
+        const currentAngle = Math.atan2(event.clientY - session.center.y, event.clientX - session.center.x);
+        const delta = currentAngle - session.startAngle;
+        const rotationDegrees = ((session.initialRotation + (delta * 180) / Math.PI) % 360 + 360) % 360;
+        updateTextLayer(session.layerId, { rotation: rotationDegrees });
+        document.body.style.cursor = 'grabbing';
+      }
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const session = transformSession.current;
+      if (!session) return;
+      if (event.pointerId !== session.pointerId) return;
+
+      document.body.style.removeProperty('cursor');
+
+      if (session.type === 'move') {
+        setActiveTextId(session.layerId);
+        if (!session.moved) {
+          setEditingTextId(session.layerId);
+        }
+      } else if (session.type === 'resize' || session.type === 'rotate') {
+        setActiveTextId(session.layerId);
+      }
+
+      transformSession.current = null;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [updateTextLayer]);
+
+  useEffect(() => {
+    if (!editingTextId) return;
+    const element = textElementRefs.current[editingTextId];
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, [editingTextId]);
+
+  const activeTextLayer = useMemo(() => textLayers.find((layer) => layer.id === activeTextId) ?? null, [textLayers, activeTextId]);
+
+  const activeFontSizePx = useMemo(() => {
+    if (!activeTextLayer) return 0;
+    return Math.max(8, Math.round(activeTextLayer.fontSize * (canvasSize.height || 1)));
+  }, [activeTextLayer, canvasSize.height]);
+
+  const activeLetterSpacingPx = useMemo(() => {
+    if (!activeTextLayer) return 0;
+    return Math.round(activeTextLayer.letterSpacing * (canvasSize.width || 1));
+  }, [activeTextLayer, canvasSize.width]);
+
+  const handleFontSizeChange = useCallback((sizePx: number) => {
+    if (!activeTextId) return;
+    const { height } = canvasSizeRef.current;
+    if (!height) return;
+    const ratio = clamp(sizePx / height, 0.01, 1);
+    updateTextLayer(activeTextId, { fontSize: ratio });
+  }, [activeTextId, updateTextLayer]);
+
+  const handleLetterSpacingChange = useCallback((spacingPx: number) => {
+    if (!activeTextId) return;
+    const { width } = canvasSizeRef.current;
+    if (!width) return;
+    const ratio = spacingPx / width;
+    updateTextLayer(activeTextId, { letterSpacing: ratio });
+  }, [activeTextId, updateTextLayer]);
+
+  const handleFontFamilyChange = useCallback((fontFamily: string) => {
+    if (!activeTextId) return;
+    updateTextLayer(activeTextId, { fontFamily });
+  }, [activeTextId, updateTextLayer]);
+
+  const handleColorChange = useCallback((color: string) => {
+    if (!activeTextId) return;
+    updateTextLayer(activeTextId, { color });
+  }, [activeTextId, updateTextLayer]);
+
+  const toggleFontWeight = useCallback(() => {
+    if (!activeTextId) return;
+    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
+    if (!layer) return;
+    updateTextLayer(activeTextId, { fontWeight: layer.fontWeight === 'bold' ? 'normal' : 'bold' });
+  }, [activeTextId, updateTextLayer]);
+
+  const toggleFontStyle = useCallback(() => {
+    if (!activeTextId) return;
+    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
+    if (!layer) return;
+    updateTextLayer(activeTextId, { fontStyle: layer.fontStyle === 'italic' ? 'normal' : 'italic' });
+  }, [activeTextId, updateTextLayer]);
+
+  const toggleUnderline = useCallback(() => {
+    if (!activeTextId) return;
+    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
+    if (!layer) return;
+    updateTextLayer(activeTextId, { underline: !layer.underline });
+  }, [activeTextId, updateTextLayer]);
+
+  const handleTextAlignChange = useCallback((align: 'left' | 'center' | 'right') => {
+    if (!activeTextId) return;
+    updateTextLayer(activeTextId, { textAlign: align });
+  }, [activeTextId, updateTextLayer]);
+
+  const handleDeleteActiveText = useCallback(() => {
+    if (!activeTextId) return;
+    removeTextLayer(activeTextId);
+  }, [activeTextId, removeTextLayer]);
+
+  const handleCanvasPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const editingId = editingTextIdRef.current;
+    if (!editingId) return;
+    const target = event.target as Node | null;
+    if (!target) return;
+    const textEl = textElementRefs.current[editingId];
+    const toolbarEl = textToolbarRefs.current[editingId];
+    if (textEl?.contains(target) || toolbarEl?.contains(target)) return;
+    setEditingTextId(null);
   }, []);
 
   // Load design or template from query parameter
@@ -836,6 +1358,10 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     setHistoryIndex(-1);
     setCurrentDesignId(null);
     setCurrentIterationId(null);
+    setTextLayers([]);
+    setActiveTextId(null);
+    setEditingTextId(null);
+    setHoveredTextId(null);
     setShowStartOverDialog(false);
     
     // Remove design ID from URL if present
@@ -1209,7 +1735,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
           {/* Canvas */}
           <div 
             ref={canvasRef}
-            className={`relative border-2 rounded-2xl overflow-hidden shadow-sm transition-all ${
+            className={`relative border-2 rounded-2xl shadow-sm transition-all ${
               isDragging ? 'border-[#1d1d1f] border-dashed bg-gray-50' : 
               hotspotMode ? 'border-[#7c3aed] cursor-crosshair' :
               'border-gray-200'
@@ -1218,6 +1744,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={handleCanvasClick}
+            onPointerDown={handleCanvasPointerDown}
             style={{ 
               width: 'min(calc((100vh - 280px) * 4 / 5), 700px, 100%)',
               aspectRatio: '4 / 5',
@@ -1233,12 +1760,14 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
             />
             {generatedImage ? (
               <>
-                <Image
-                  src={generatedImage}
-                  alt="Generated design"
-                  fill
-                  className="object-cover"
-                />
+                <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+                  <Image
+                    src={generatedImage}
+                    alt="Generated design"
+                    fill
+                    className="object-cover"
+                  />
+                </div>
                 {/* Hotspot indicator */}
                 {hotspot && !hotspotMode && (
                   <HotspotIndicator hotspot={hotspot} imageUrl={generatedImage} containerRef={canvasRef} />
@@ -1302,6 +1831,267 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                 </div>
               </div>
             )}
+
+            {/* Text Layers */}
+            {canvasSize.width > 0 && canvasSize.height > 0 && textLayers.map((layer) => {
+              const widthPx = layer.width * canvasSize.width;
+              const heightPx = layer.height * canvasSize.height;
+              const xPx = layer.x * canvasSize.width;
+              const yPx = layer.y * canvasSize.height;
+              const rotationDeg = layer.rotation;
+              const isActive = layer.id === activeTextId;
+              const isEditing = layer.id === editingTextId;
+              const isHover = hoveredTextId === layer.id;
+              const selectionVisible = isActive || isEditing || isHover;
+
+              return (
+                <div
+                  key={layer.id}
+                  className="absolute"
+                  style={{
+                    left: xPx,
+                    top: yPx,
+                    width: widthPx,
+                    height: heightPx,
+                    zIndex: isEditing ? 20 : isActive ? 18 : 16,
+                  }}
+                  onPointerDown={(event) => startMoveSession(layer.id, event)}
+                  onPointerEnter={() => setHoveredTextId(layer.id)}
+                  onPointerLeave={() => setHoveredTextId((prev) => (prev === layer.id ? null : prev))}
+                >
+                  <div
+                    ref={(el) => {
+                      if (!el) {
+                        delete textWrapperRefs.current[layer.id];
+                      } else {
+                        textWrapperRefs.current[layer.id] = el;
+                      }
+                    }}
+                    className="absolute inset-0"
+                  >
+                    {selectionVisible && (
+                      <div className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+                        <div
+                          className="absolute inset-0 border"
+                          style={{
+                            borderColor: isEditing ? '#7c3aed' : 'rgba(124,58,237,0.35)',
+                            borderWidth: isEditing ? 2 : 1.5,
+                            borderRadius: 2,
+                          }}
+                        />
+                        {/* Corner handles */}
+                        {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((corner) => {
+                          const positionClasses = {
+                            'top-left': '-left-2 -top-2 cursor-nwse-resize',
+                            'top-right': '-right-2 -top-2 cursor-nesw-resize',
+                            'bottom-left': '-left-2 -bottom-2 cursor-nesw-resize',
+                            'bottom-right': '-right-2 -bottom-2 cursor-nwse-resize',
+                          } as const;
+
+                          return (
+                            <div
+                              key={corner}
+                              className={`absolute w-3 h-3 bg-white border-2 border-[#1d1d1f] rounded-sm shadow-sm pointer-events-auto ${positionClasses[corner]}`}
+                              onPointerDown={(event) => startResizeSession(layer.id, corner, event)}
+                            />
+                          );
+                        })}
+                        {/* Rotate handle */}
+                        <div
+                          className="absolute -top-6 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full border-2 border-[#1d1d1f] bg-white shadow-sm cursor-grab pointer-events-auto"
+                          onPointerDown={(event) => startRotateSession(layer.id, event)}
+                        />
+                      </div>
+                    )}
+
+                    <div
+                      ref={(el) => {
+                        if (!el) {
+                          delete textElementRefs.current[layer.id];
+                        } else {
+                          textElementRefs.current[layer.id] = el;
+                        }
+                      }}
+                      className="absolute inset-0 px-3 py-2"
+                      contentEditable={isEditing}
+                      suppressContentEditableWarning
+                      onInput={(event) => {
+                        const value = event.currentTarget.innerText.replace(/\u00a0/g, ' ');
+                        updateTextLayer(layer.id, { text: value });
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setEditingTextId(null);
+                        }
+                      }}
+                      onPointerDown={(event) => {
+                        if (isEditing) {
+                          event.stopPropagation();
+                        }
+                      }}
+                      style={{
+                        transform: `rotate(${rotationDeg}deg)`,
+                        transformOrigin: '50% 50%',
+                        fontFamily: getFontStack(layer.fontFamily),
+                        fontWeight: layer.fontWeight,
+                        fontStyle: layer.fontStyle,
+                        textDecoration: layer.underline ? 'underline' : 'none',
+                        textAlign: layer.textAlign,
+                        fontSize: `${layer.fontSize * (canvasSize.height || 1)}px`,
+                        color: layer.color,
+                        letterSpacing: `${layer.letterSpacing * (canvasSize.width || 1)}px`,
+                        lineHeight: 1.2,
+                        whiteSpace: 'pre-wrap',
+                        cursor: isEditing ? 'text' : 'move',
+                        userSelect: isEditing ? 'text' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent:
+                          layer.textAlign === 'left'
+                            ? 'flex-start'
+                            : layer.textAlign === 'right'
+                            ? 'flex-end'
+                            : 'center',
+                      }}
+                    >
+                      {layer.text || ' '}
+                    </div>
+                  </div>
+
+                  {isEditing && activeTextLayer && activeTextLayer.id === layer.id && (
+                    <div
+                      ref={(el) => {
+                        if (!el) {
+                          delete textToolbarRefs.current[layer.id];
+                        } else {
+                          textToolbarRefs.current[layer.id] = el;
+                        }
+                      }}
+                      className="absolute -top-16 left-1/2 -translate-x-1/2 flex items-center gap-3 px-3 py-2 bg-white/95 border border-gray-200 rounded-xl shadow-lg backdrop-blur-sm"
+                      style={{ pointerEvents: 'auto' }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <Select.Root
+                        items={FONT_OPTIONS.map((font) => ({ label: font.label, value: font.value }))}
+                        value={activeTextLayer.fontFamily}
+                        onValueChange={(value) => handleFontFamilyChange(value as string)}
+                      >
+                        <div className="relative">
+                          <Select.Trigger className="inline-flex items-center gap-1 px-2 py-1 pr-6 bg-white text-xs text-[#1d1d1f] border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20 focus:border-[#7c3aed]/30 transition-all hover:bg-gray-50 cursor-pointer">
+                            <Select.Value />
+                          </Select.Trigger>
+                          <Select.Icon className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                            </svg>
+                          </Select.Icon>
+                        </div>
+                        <Select.Portal>
+                          <Select.Positioner side="bottom" align="start" sideOffset={6} className="z-[9999]">
+                            <Select.Popup className="bg-white border border-gray-200 rounded-lg shadow-lg py-2 max-h-56 overflow-auto min-w-[160px]">
+                              <Select.List className="divide-y divide-gray-100">
+                                {FONT_OPTIONS.map((font) => (
+                                  <Select.Item
+                                    key={font.value}
+                                    value={font.value}
+                                    className="relative px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer transition-colors"
+                                  >
+                                    <Select.ItemText className="ml-1" style={{ fontFamily: font.stack }}>{font.label}</Select.ItemText>
+                                  </Select.Item>
+                                ))}
+                              </Select.List>
+                            </Select.Popup>
+                          </Select.Positioner>
+                        </Select.Portal>
+                      </Select.Root>
+
+                      <div className="flex items-center gap-1">
+                        <label className="text-[11px] text-gray-500">Size</label>
+                        <input
+                          type="number"
+                          min={8}
+                          max={400}
+                          value={activeFontSizePx}
+                          onChange={(event) => handleFontSizeChange(Number(event.target.value))}
+                          className="w-14 px-2 py-1 border border-gray-200 rounded-lg text-xs"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <label className="text-[11px] text-gray-500">Color</label>
+                        <input
+                          type="color"
+                          value={activeTextLayer.color}
+                          onChange={(event) => handleColorChange(event.target.value)}
+                          className="w-7 h-7 rounded border border-gray-200 cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1 w-28">
+                        <label className="text-[11px] text-gray-500">Spacing</label>
+                        <input
+                          type="range"
+                          min={-20}
+                          max={80}
+                          value={clamp(activeLetterSpacingPx, -20, 80)}
+                          onChange={(event) => handleLetterSpacingChange(Number(event.target.value))}
+                          className="w-full accent-[#7c3aed]"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={toggleFontWeight}
+                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs font-semibold ${activeTextLayer.fontWeight === 'bold' ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        >
+                          B
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleFontStyle}
+                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs italic ${activeTextLayer.fontStyle === 'italic' ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        >
+                          I
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleUnderline}
+                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs underline ${activeTextLayer.underline ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        >
+                          U
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {(['left', 'center', 'right'] as const).map((align) => (
+                          <button
+                            key={align}
+                            type="button"
+                            onClick={() => handleTextAlignChange(align)}
+                            className={`w-7 h-7 flex items-center justify-center rounded border text-xs capitalize ${activeTextLayer.textAlign === align ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                          >
+                            {align[0].toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleDeleteActiveText}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:text-white hover:bg-red-600 transition-colors border border-red-200 rounded-lg"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-3.5 h-3.5" fill="currentColor">
+                          <path d="M504 96H408l-9.4-18.7C392.4 67.7 378.1 64 363.1 64H276.9c-15 0-29.3 3.7-34.6 13.3L233 96H136c-22.1 0-40 17.9-40 40V160c0 8.8 7.2 16 16 16h14.5l26.7 342.8C155.4 553.5 175.8 576 201 576h238.1c25.2 0 45.6-22.5 47.9-57.2L513.7 176H528c8.8 0 16-7.2 16-16V136c0-22.1-17.9-40-40-40z" />
+                        </svg>
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1615,6 +2405,30 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                     <Tooltip.Positioner>
                       <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
                         {hotspotMode ? 'Click on image to select area' : 'Select edit area'}
+                      </Tooltip.Popup>
+                    </Tooltip.Positioner>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
+
+                {/* Add Text Button */}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <button
+                      onClick={() => {
+                        addTextLayer();
+                      }}
+                      disabled={loading || !generatedImage}
+                      className="px-3 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5" fill="currentColor">
+                        <path d="M349.1 114.7C343.9 103.3 332.5 96 320 96C307.5 96 296.1 103.3 290.9 114.7L123.5 480L112 480C94.3 480 80 494.3 80 512C80 529.7 94.3 544 112 544L200 544C217.7 544 232 529.7 232 512C232 494.3 217.7 480 200 480L193.9 480L215.9 432L424.2 432L446.2 480L440.1 480C422.4 480 408.1 494.3 408.1 512C408.1 529.7 422.4 544 440.1 544L528.1 544C545.8 544 560.1 529.7 560.1 512C560.1 494.3 545.8 480 528.1 480L516.6 480L349.2 114.7zM394.8 368L245.2 368L320 204.8L394.8 368z" />
+                      </svg>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Positioner>
+                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                        Add text
                       </Tooltip.Popup>
                     </Tooltip.Positioner>
                   </Tooltip.Portal>

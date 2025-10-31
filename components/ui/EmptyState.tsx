@@ -20,7 +20,7 @@ export function EmptyState({ icon, title, description, action, className, conten
         className,
       )}
     >
-      <div className={clsx('max-w-md mx-auto space-y-6', contentClassName)}>
+      <div className={clsx('max-w-lg mx-auto space-y-6', contentClassName)}>
         {icon && <div className="flex justify-center">{icon}</div>}
         <div className="space-y-2">
           <h2 className="text-2xl font-semibold tracking-tight text-[#1d1d1f]">{title}</h2>

@@ -102,8 +102,8 @@ export default function DesignsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="bg-[#f5f5f7]">
+      <div className="max-w-7xl mx-auto p-8 min-h-screen flex flex-col">
         {/* Header */}
         {designs.length > 0 && (
           <div className="mb-8 flex flex-col gap-4">
@@ -129,7 +129,7 @@ export default function DesignsPage() {
 
         {designs.length === 0 ? (
           <EmptyState
-            className="h-[calc(100vh-60px)]"
+            className="flex-grow"
             icon={
               <div className="w-24 h-24 rounded-full bg-gradient-to-b from-[#7c3aed] to-[#6d28d9] shadow-2xl shadow-[#7c3aed]/40 flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-12 h-12 text-white" fill="currentColor">
@@ -142,7 +142,7 @@ export default function DesignsPage() {
             action={
               <Link
                 href="/editor"
-                className="inline-block px-8 py-3 bg-[#7c3aed] text-white rounded-xl hover:bg-[#6d28d9] font-medium tracking-tight transition-all shadow-lg shadow-[#7c3aed]/20 hover:shadow-[#7c3aed]/30"
+                className="inline-block px-8 py-3 bg-[#7c3aed] text-white rounded-xl hover:bg-[#6d28d9] text-sm font-bold tracking-tight transition-all"
               >
                 Create Your First Design
               </Link>
