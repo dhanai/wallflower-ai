@@ -1131,15 +1131,15 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   }
 
   return (
-    <div className={`${embedded ? 'min-h-screen' : 'fixed inset-0'} bg-gradient-to-br from-white to-gray-50 flex flex-col`} style={{ overflow: 'hidden' }}>
+    <div className={`${embedded ? 'min-h-screen' : 'fixed inset-0'} bg-[#f5f5f7] flex flex-col`} style={{ overflow: 'hidden' }}>
       {/* Header - Fixed Top */}
-      <div className="flex-shrink-0 grid grid-cols-3 items-center p-4 bg-white/80 backdrop-blur-xl">
+      <div className="flex-shrink-0 grid grid-cols-3 items-center p-4 backdrop-blur-xl">
         <div className="flex items-center gap-4">
           {generatedImage && (
             <button
               onClick={() => setShowStartOverDialog(true)}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors border border-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
               title="Start Over"
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor">
@@ -1307,7 +1307,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       </div>
 
       {/* Footer - Fixed Bottom */}
-      <div className="relative flex-shrink-0 bg-white/80 backdrop-blur-xl">
+      <div className="relative flex-shrink-0 backdrop-blur-xl">
         {/* Selectors */}
         {showSettings && (
         <>
@@ -1412,7 +1412,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                   value={backgroundColor}
                   onChange={(e) => setBackgroundColor(e.target.value)}
                   disabled={loading}
-                  className="w-8 h-8 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200"
+                  className="w-8 h-8 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 color-input"
                   title="Choose background color"
                 />
                 <span className="hidden text-xs text-gray-700">{backgroundColor.toUpperCase()}</span>

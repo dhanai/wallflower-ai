@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Menu } from '@base-ui-components/react/menu';
 import { createClient } from '@/lib/supabase/client';
+import { useUserRole } from '@/hooks/useUserRole';
 
 interface DashboardSidebarProps {
   initialUserName?: string | null;
@@ -23,7 +24,7 @@ export default function DashboardSidebar({
   const [userName, setUserName] = useState<string | null>(initialUserName ?? null);
   const [userEmail, setUserEmail] = useState<string | null>(initialUserEmail ?? null);
   const [userAvatar, setUserAvatar] = useState<string | null>(initialUserAvatar ?? null);
-  const [userRole, setUserRole] = useState<string | null>(initialUserRole ?? null);
+  const { role: userRole, refresh: refreshUserRole } = useUserRole({ initialRole: (initialUserRole as 'admin' | 'user' | null) ?? null });
   const pathname = usePathname();
 
   // Derive a deterministic color from a string (name/email)
@@ -78,28 +79,19 @@ export default function DashboardSidebar({
         setUserEmail(email);
         setUserAvatar(picture);
 
-        // Fetch user role via API route
-        try {
-          const response = await fetch('/api/auth/user-role');
-          if (response.ok) {
-            const { role } = await response.json();
-            setUserRole(role || null);
-          }
-        } catch (error) {
-          console.error('Error fetching user role:', error);
-        }
+        refreshUserRole();
       } else if (event === 'SIGNED_OUT') {
         setUserName(null);
         setUserEmail(null);
         setUserAvatar(null);
-        setUserRole(null);
+        refreshUserRole();
       }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshUserRole]);
 
   const handleSignOut = async () => {
     try {
@@ -127,21 +119,21 @@ export default function DashboardSidebar({
   return (
     <aside className={`${expanded ? 'w-60' : 'w-16'} bg-[#1d1d1f] text-white transition-[width] duration-200 ease-in-out flex flex-col py-4 fixed left-0 top-0 h-screen`}
       aria-label="App navigation">
-      <div className="px-3 flex items-center gap-2 mb-4">
+      <div className="px-2 flex items-center gap-2 mb-4">
         <button onClick={() => setExpanded((v) => !v)} className="w-9 h-9 rounded-lg hover:bg-white/10 flex items-center justify-center" title={expanded ? 'Collapse' : 'Expand'}>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5" fill="currentColor"><path d="M320 64C185.3 64 76.8 172.5 76.8 307.2S185.3 550.4 320 550.4 563.2 441.9 563.2 307.2 454.7 64 320 64z"/></svg>
+          <div className="w-5 h-5 rounded-full bg-gradient-to-b from-[#7c3aed] to-[#6d28d9]"></div>
         </button>
-        {expanded && <span className="font-semibold tracking-tight">wallflower.ai</span>}
+        {expanded && <span className="font-bold tracking-tighter">wallflower.ai</span>}
       </div>
 
-      <nav className="mt-2 flex-1 flex flex-col gap-1">
+      <nav className="mt-2 flex-1 flex flex-col gap-1 text-sm font-bold">
         <div className="px-2">
           <Link 
             href="/editor" 
             className={`px-3 py-2 flex items-center gap-3 rounded-lg transition-colors ${
               pathname === '/editor' || pathname.startsWith('/editor?')
-                ? 'bg-white/20 text-white'
-                : 'hover:bg-white/10 text-white/80'
+                ? 'bg-white/5 text-white'
+                : 'hover:bg-white/5 text-white/'
             }`}
           >
             <span className="inline-flex w-8 justify-center">
@@ -157,8 +149,8 @@ export default function DashboardSidebar({
             href="/templates" 
             className={`px-3 py-2 flex items-center gap-3 rounded-lg transition-colors ${
               pathname === '/templates' || pathname.startsWith('/templates?')
-                ? 'bg-white/20 text-white'
-                : 'hover:bg-white/10 text-white/80'
+                ? 'bg-white/5 text-white'
+                : 'hover:bg-white/5 text-white'
             }`}
           >
             <span className="inline-flex w-8 justify-center">
@@ -174,8 +166,8 @@ export default function DashboardSidebar({
             href="/designs" 
             className={`px-3 py-2 flex items-center gap-3 rounded-lg transition-colors ${
               pathname === '/designs' || pathname.startsWith('/designs?')
-                ? 'bg-white/20 text-white'
-                : 'hover:bg-white/10 text-white/80'
+                ? 'bg-white/5 text-white'
+                : 'hover:bg-white/5 text-white'
             }`}
           >
             <span className="inline-flex w-8 justify-center">
@@ -191,7 +183,7 @@ export default function DashboardSidebar({
       {/* Bottom account section with drop-up menu */}
       <div className="mt-auto px-2 pt-2">
         <Menu.Root>
-          <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/10">
+          <Menu.Trigger className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/5">
             <span className="inline-flex w-8 h-8 rounded-full overflow-hidden items-center justify-center">
               {userAvatar && /^https?:\/\//.test(userAvatar) ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -215,7 +207,7 @@ export default function DashboardSidebar({
             </span>
             {expanded && (
               <span className="flex-1 min-w-0 flex flex-col text-left">
-                <span className="text-sm leading-tight truncate">{userName ?? 'Account'}</span>
+                <span className="text-sm font-bold leading-tight truncate">{userName ?? 'Account'}</span>
                 <span className="text-[11px] text-white/60 leading-tight truncate">{userEmail ?? ''}</span>
               </span>
             )}
@@ -224,21 +216,19 @@ export default function DashboardSidebar({
             </span>
           </Menu.Trigger>
           <Menu.Portal>
-            <Menu.Positioner side="top" align="start" sideOffset={8}>
-              <Menu.Popup className="bg-[#111111] text-white border border-white/10 rounded-lg shadow-xl py-1.5 min-w-[180px]">
-                <Menu.Item className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">
+            <Menu.Positioner side="top" align="start" sideOffset={10}>
+              <Menu.Popup className="bg-white text-black rounded-lg shadow-xl min-w-[224px] overflow-hidden">
+                <Menu.Item className="px-3 py-3 text-xs font-bold hover:bg-[#7c3aed] hover:text-white cursor-pointer border-b border-black/5">
                   <Link href="/account" className="block w-full">Account</Link>
                 </Menu.Item>
                 {userRole === 'admin' && (
                   <>
-                    <Menu.Separator className="my-1 h-px bg-white/10" />
-                    <Menu.Item className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">
+                    <Menu.Item className="px-3 py-3 text-xs font-bold hover:bg-[#7c3aed] hover:text-white cursor-pointer border-b border-black/5">
                       <Link href="/admin" className="block w-full">Admin Panel</Link>
                     </Menu.Item>
                   </>
                 )}
-                <Menu.Separator className="my-1 h-px bg-white/10" />
-                <Menu.Item onClick={handleSignOut} className="px-3 py-1.5 text-[13px] hover:bg-white/10 cursor-pointer">Sign out</Menu.Item>
+                <Menu.Item onClick={handleSignOut} className="px-3 py-3 text-xs font-bold hover:bg-[#7c3aed] hover:text-white cursor-pointer">Sign out</Menu.Item>
               </Menu.Popup>
             </Menu.Positioner>
           </Menu.Portal>
