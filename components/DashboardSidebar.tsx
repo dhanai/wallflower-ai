@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Menu } from '@base-ui-components/react/menu';
 import { createClient } from '@/lib/supabase/client';
-import { useUserRole } from '@/hooks/useUserRole';
+import { useUserRole, setCachedUserRole } from '@/hooks/useUserRole';
 
 interface DashboardSidebarProps {
   initialUserName?: string | null;
@@ -74,17 +74,19 @@ export default function DashboardSidebar({
         const picture = typeof rawPicture === 'string' && rawPicture.trim().length > 0 ? rawPicture.trim() : null;
         const name = meta.name || meta.full_name || u.email?.split('@')[0] || null;
         const email = u.email ?? null;
-        
+
         setUserName(name);
         setUserEmail(email);
         setUserAvatar(picture);
 
-        refreshUserRole();
+        if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
+          await refreshUserRole();
+        }
       } else if (event === 'SIGNED_OUT') {
         setUserName(null);
         setUserEmail(null);
         setUserAvatar(null);
-        refreshUserRole();
+        setCachedUserRole(null);
       }
     });
 

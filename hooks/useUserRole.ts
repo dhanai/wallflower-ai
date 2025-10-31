@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient, ApiError } from '@/lib/api/client';
 
 export type UserRole = 'admin' | 'user' | null;
@@ -19,21 +19,73 @@ interface UseUserRoleResult {
   refresh: () => Promise<void>;
 }
 
+let cachedRole: UserRole | undefined = undefined;
+let cachedError: string | null = null;
+let loadingPromise: Promise<UserRole | null> | null = null;
+const listeners = new Set<(role: UserRole, error: string | null) => void>();
+
+const notify = (role: UserRole, error: string | null) => {
+  cachedRole = role;
+  cachedError = error;
+  listeners.forEach(listener => listener(role, error));
+};
+
+const fetchRoleFromApi = async (): Promise<UserRole | null> => {
+  try {
+    const data = await apiClient.get<{ role: UserRole }>('/api/auth/user-role');
+    const role = data.role ?? null;
+    notify(role, null);
+    return role;
+  } catch (err) {
+    const apiError = err as ApiError;
+
+    if (apiError.status === 401) {
+      notify(null, null);
+      return null;
+    }
+
+    notify(cachedRole ?? null, apiError.message);
+    throw apiError;
+  }
+};
+
+const loadRole = async (force = false): Promise<UserRole | null> => {
+  if (!force && cachedRole !== undefined) {
+    return cachedRole;
+  }
+
+  if (!loadingPromise || force) {
+    loadingPromise = fetchRoleFromApi().finally(() => {
+      loadingPromise = null;
+    });
+  }
+
+  return loadingPromise;
+};
+
+export function setCachedUserRole(role: UserRole) {
+  notify(role, null);
+}
+
 export function useUserRole(options: UseUserRoleOptions = {}): UseUserRoleResult {
   const { initialRole = null, enabled = true } = options;
-  const [role, setRole] = useState<UserRole>(initialRole ?? null);
-  const [loading, setLoading] = useState<boolean>(enabled);
-  const [error, setError] = useState<string | null>(null);
+  const initial = cachedRole !== undefined ? cachedRole : initialRole;
+  const [role, setRole] = useState<UserRole>(initial ?? null);
+  const [loading, setLoading] = useState<boolean>(enabled && cachedRole === undefined && initialRole === null);
+  const [error, setError] = useState<string | null>(cachedError);
 
-  const fetchRole = async () => {
+  const fetchRole = useCallback(async () => {
     if (!enabled) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const data = await apiClient.get<{ role: UserRole }>('/api/auth/user-role');
-      setRole(data.role ?? null);
+      const result = await loadRole(true);
+      if (result !== undefined) {
+        setRole(result);
+      }
+      setError(null);
     } catch (err) {
       const apiError = err as ApiError;
 
@@ -48,20 +100,40 @@ export function useUserRole(options: UseUserRoleOptions = {}): UseUserRoleResult
     } finally {
       setLoading(false);
     }
-  };
+  }, [enabled]);
 
   useEffect(() => {
-    if (!enabled) return;
-
-    // Avoid refetch when initialRole provided and not null
-    if (initialRole !== undefined && initialRole !== null) {
+    if (!enabled) {
       setLoading(false);
       return;
     }
 
-    fetchRole();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+    // Avoid refetch when initialRole provided and not null
+    if (cachedRole === undefined && initialRole === null) {
+      setLoading(true);
+      loadRole().finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [enabled, initialRole]);
+
+  useEffect(() => {
+    const listener = (newRole: UserRole, newError: string | null) => {
+      setRole(newRole);
+      setError(newError);
+    };
+
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialRole !== undefined && initialRole !== null) {
+      notify(initialRole, null);
+    }
+  }, [initialRole]);
 
   return {
     role,
