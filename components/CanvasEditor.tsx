@@ -96,6 +96,7 @@ type TextLayer = {
   textAlign: 'left' | 'center' | 'right';
   color: string;
   letterSpacing: number; // relative to canvas width
+  curve: number; // -1 (concave up) to 1 (concave down)
 };
 
 type ResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -140,6 +141,155 @@ const MIN_TEXT_WIDTH_PX = 40;
 const MIN_TEXT_HEIGHT_PX = 24;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const CURVE_THRESHOLD = 0.01;
+const MAX_CURVE_RADIANS = Math.PI * 0.85; // ~153 degrees of bend
+
+const CURVE_PRESETS: Array<{ label: string; value: number; description: string }> = [
+  { label: 'U50', value: -0.6, description: 'Curve up 60%' },
+  { label: 'U25', value: -0.3, description: 'Curve up 30%' },
+  { label: 'Flat', value: 0, description: 'No curve' },
+  { label: 'D25', value: 0.3, description: 'Curve down 30%' },
+  { label: 'D50', value: 0.6, description: 'Curve down 60%' },
+];
+
+const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: number): HTMLCanvasElement | null => {
+  if (typeof document === 'undefined') return null;
+
+  const widthPx = Math.max(1, Math.round(layer.width * baseWidth));
+  const heightPx = Math.max(1, Math.round(layer.height * baseHeight));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = widthPx;
+  canvas.height = heightPx;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const text = layer.text || '';
+  if (!text.trim()) {
+    return canvas;
+  }
+
+  const fontSizePx = layer.fontSize * baseHeight;
+  const letterSpacingPx = layer.letterSpacing * baseWidth;
+  const fontParts = [
+    layer.fontStyle === 'italic' ? 'italic' : '',
+    layer.fontWeight === 'bold' ? 'bold' : '',
+    `${fontSizePx}px`,
+    getFontStack(layer.fontFamily),
+  ].filter(Boolean);
+
+  ctx.font = fontParts.join(' ');
+  ctx.fillStyle = layer.color;
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+
+  const characters = Array.from(text);
+  const glyphs = characters.map((char, index) => {
+    const metrics = ctx.measureText(char);
+    const advance = metrics.width + (index < characters.length - 1 ? letterSpacingPx : 0);
+    return { char, metrics, advance };
+  });
+
+  const totalAdvance = glyphs.reduce((acc, glyph) => acc + glyph.advance, 0);
+  if (totalAdvance <= 0) {
+    return canvas;
+  }
+
+  const effectiveCurve = text.includes('\n') ? 0 : clamp(layer.curve, -0.95, 0.95);
+  const curveRadians = effectiveCurve * MAX_CURVE_RADIANS;
+
+  const needsVerticalPadding = Math.abs(curveRadians) >= CURVE_THRESHOLD;
+  const paddingY = needsVerticalPadding ? fontSizePx * 0.8 : 0;
+  const effectiveHeight = heightPx + paddingY * 2;
+
+  if (canvas.height !== Math.max(1, Math.round(effectiveHeight))) {
+    canvas.height = Math.max(1, Math.round(effectiveHeight));
+  }
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = layer.color;
+  ctx.font = fontParts.join(' ');
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+
+  if (Math.abs(curveRadians) < CURVE_THRESHOLD) {
+    let startX: number;
+    if (layer.textAlign === 'left') {
+      startX = 0;
+    } else if (layer.textAlign === 'right') {
+      startX = Math.max(widthPx - totalAdvance, 0);
+    } else {
+      startX = (widthPx - totalAdvance) / 2;
+    }
+
+    const baselineY = paddingY + heightPx / 2;
+    glyphs.forEach((glyph) => {
+      ctx.fillText(glyph.char, startX, baselineY);
+      if (layer.underline) {
+        const underlineY = baselineY + (glyph.metrics.actualBoundingBoxDescent || fontSizePx * 0.1);
+        const underlineHeight = Math.max(1, fontSizePx * 0.05);
+        ctx.fillRect(startX, underlineY, glyph.metrics.width, underlineHeight);
+      }
+      startX += glyph.advance;
+    });
+
+    return canvas;
+  }
+
+  const radius = totalAdvance / curveRadians;
+  const baselineY = paddingY + heightPx / 2;
+  const centerX = widthPx / 2;
+  const centerY = baselineY + radius;
+
+  const positions: { glyph: typeof glyphs[number]; midAngle: number; x: number; y: number }[] = [];
+  let currentAngleOffset = 0;
+
+  glyphs.forEach((glyph) => {
+    const glyphAngle = glyph.advance / radius;
+    const midAngle = -curveRadians / 2 + currentAngleOffset + glyphAngle / 2;
+    const x = centerX + radius * Math.sin(midAngle);
+    const y = centerY - radius * Math.cos(midAngle);
+    positions.push({ glyph, midAngle, x, y });
+    currentAngleOffset += glyphAngle;
+  });
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  positions.forEach(({ glyph, x }) => {
+    const halfWidth = glyph.metrics.width / 2;
+    minX = Math.min(minX, x - halfWidth);
+    maxX = Math.max(maxX, x + halfWidth);
+  });
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
+    return canvas;
+  }
+
+  let shiftX = 0;
+  if (layer.textAlign === 'left') {
+    shiftX = -minX;
+  } else if (layer.textAlign === 'right') {
+    shiftX = widthPx - maxX;
+  } else {
+    shiftX = widthPx / 2 - (minX + maxX) / 2;
+  }
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  positions.forEach(({ glyph, midAngle, x, y }) => {
+    ctx.save();
+    ctx.translate(x + shiftX, y);
+    ctx.rotate(midAngle);
+    ctx.fillText(glyph.char, 0, 0);
+    ctx.restore();
+  });
+  ctx.restore();
+
+  return canvas;
+};
 
 const getFontStack = (fontFamily: string) => {
   const option = FONT_OPTIONS.find((font) => font.value === fontFamily);
@@ -261,12 +411,14 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [hoveredTextId, setHoveredTextId] = useState<string | null>(null);
+  const [fontsReady, setFontsReady] = useState(false);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
   const textElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const textWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const textToolbarRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const textCanvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
   const canvasRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
   const transformSession = useRef<TransformSession | null>(null);
@@ -293,6 +445,34 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   useEffect(() => {
     editingTextIdRef.current = editingTextId;
   }, [editingTextId]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      setFontsReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    const maybeFonts = (document as any).fonts;
+
+    if (maybeFonts && typeof maybeFonts.ready === 'object' && typeof maybeFonts.ready.then === 'function') {
+      (maybeFonts.ready as Promise<void>).then(() => {
+        if (!cancelled) {
+          setFontsReady(true);
+        }
+      }).catch(() => {
+        if (!cancelled) {
+          setFontsReady(true);
+        }
+      });
+    } else {
+      setFontsReady(true);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const updateTextLayer = useCallback(
     (id: string, updates: Partial<TextLayer>) => {
@@ -335,6 +515,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       textAlign: 'center',
       color: '#1d1d1f',
       letterSpacing: 0,
+      curve: 0,
     };
 
     setTextLayers((prev) => [...prev, newLayer]);
@@ -646,6 +827,11 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     return Math.round(activeTextLayer.letterSpacing * (canvasSize.width || 1));
   }, [activeTextLayer, canvasSize.width]);
 
+  const activeCurveValue = useMemo(() => {
+    if (!activeTextLayer) return 0;
+    return clamp(activeTextLayer.curve, -1, 1);
+  }, [activeTextLayer]);
+
   const handleFontSizeChange = useCallback((sizePx: number) => {
     if (!activeTextId) return;
     const { height } = canvasSizeRef.current;
@@ -661,6 +847,68 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     const ratio = spacingPx / width;
     updateTextLayer(activeTextId, { letterSpacing: ratio });
   }, [activeTextId, updateTextLayer]);
+
+  const handleCurvePresetClick = useCallback((curveValue: number) => {
+    if (!activeTextId) return;
+    const normalized = clamp(curveValue, -1, 1);
+    updateTextLayer(activeTextId, { curve: normalized });
+  }, [activeTextId, updateTextLayer]);
+
+  const drawCurvedTextLayer = useCallback((layer: TextLayer, canvasEl: HTMLCanvasElement) => {
+    if (!canvasEl) return;
+
+    const { width: canvasWidth, height: canvasHeight } = canvasSizeRef.current;
+    if (!canvasWidth || !canvasHeight) return;
+
+    const layerCanvas = createLayerCanvas(layer, canvasWidth, canvasHeight);
+    const widthPx = layerCanvas ? layerCanvas.width : Math.max(1, Math.round(layer.width * canvasWidth));
+    const heightPx = layerCanvas ? layerCanvas.height : Math.max(1, Math.round(layer.height * canvasHeight));
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+
+    const pixelWidth = Math.max(1, Math.round(widthPx * dpr));
+    const pixelHeight = Math.max(1, Math.round(heightPx * dpr));
+
+    if (canvasEl.width !== pixelWidth) {
+      canvasEl.width = pixelWidth;
+    }
+    if (canvasEl.height !== pixelHeight) {
+      canvasEl.height = pixelHeight;
+    }
+    canvasEl.style.width = `${widthPx}px`;
+    canvasEl.style.height = `${heightPx}px`;
+
+    const ctx = canvasEl.getContext('2d');
+    if (!ctx) return;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    ctx.scale(dpr, dpr);
+
+    if (layerCanvas) {
+      ctx.drawImage(layerCanvas, 0, 0, widthPx, heightPx);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || !fontsReady) return;
+    const { width, height } = canvasSize;
+    if (!width || !height) return;
+
+    textLayers.forEach((layer) => {
+      const canvasEl = textCanvasRefs.current[layer.id];
+      if (!canvasEl) return;
+
+      if (Math.abs(layer.curve) < CURVE_THRESHOLD || layer.text.includes('\n')) {
+        const ctx = canvasEl.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        }
+        return;
+      }
+
+      drawCurvedTextLayer(layer, canvasEl);
+    });
+  }, [textLayers, canvasSize.width, canvasSize.height, fontsReady, mounted, drawCurvedTextLayer, editingTextId]);
 
   const handleFontFamilyChange = useCallback((fontFamily: string) => {
     if (!activeTextId) return;
@@ -1614,15 +1862,33 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       img.crossOrigin = 'anonymous';
       const blobUrl: string = await new Promise((resolve, reject) => {
         img.onload = () => {
+          const exportWidth = img.naturalWidth || img.width;
+          const exportHeight = img.naturalHeight || img.height;
           const canvas = document.createElement('canvas');
-          canvas.width = img.naturalWidth || img.width;
-          canvas.height = img.naturalHeight || img.height;
+          canvas.width = exportWidth;
+          canvas.height = exportHeight;
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             reject(new Error('Canvas not supported'));
             return;
           }
-          ctx.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0, exportWidth, exportHeight);
+
+          textLayers.forEach((layer) => {
+            const layerCanvas = createLayerCanvas(layer, exportWidth, exportHeight);
+            if (!layerCanvas) return;
+            const layerWidthPx = layerCanvas.width;
+            const layerHeightPx = layerCanvas.height;
+            const originX = layer.x * exportWidth;
+            const originY = layer.y * exportHeight;
+
+            ctx.save();
+            ctx.translate(originX + layerWidthPx / 2, originY + layerHeightPx / 2);
+            ctx.rotate((layer.rotation * Math.PI) / 180);
+            ctx.drawImage(layerCanvas, -layerWidthPx / 2, -layerHeightPx / 2, layerWidthPx, layerHeightPx);
+            ctx.restore();
+          });
+
           canvas.toBlob((blob) => {
             if (!blob) {
               reject(new Error('Failed to create PNG'));
@@ -1843,6 +2109,9 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
               const isEditing = layer.id === editingTextId;
               const isHover = hoveredTextId === layer.id;
               const selectionVisible = isActive || isEditing || isHover;
+              const hasMultiline = layer.text.includes('\n');
+              const showCurvedCanvas = Math.abs(layer.curve) >= CURVE_THRESHOLD && !hasMultiline && fontsReady;
+              const textOpacity = showCurvedCanvas && isEditing ? 0.2 : showCurvedCanvas ? 0 : 1;
 
               return (
                 <div
@@ -1904,6 +2173,24 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                       </div>
                     )}
 
+                    {showCurvedCanvas && (
+                      <canvas
+                        ref={(el) => {
+                          if (!el) {
+                            delete textCanvasRefs.current[layer.id];
+                          } else {
+                            textCanvasRefs.current[layer.id] = el;
+                          }
+                        }}
+                        className="absolute inset-0"
+                        style={{
+                          transform: `rotate(${rotationDeg}deg)`,
+                          transformOrigin: '50% 50%',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    )}
+
                     <div
                       ref={(el) => {
                         if (!el) {
@@ -1953,6 +2240,9 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                             : layer.textAlign === 'right'
                             ? 'flex-end'
                             : 'center',
+                        opacity: textOpacity,
+                        transition: 'opacity 120ms ease-in-out',
+                        pointerEvents: isEditing ? 'auto' : 'none',
                       }}
                     >
                       {layer.text || ' '}
@@ -2038,6 +2328,41 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                           onChange={(event) => handleLetterSpacingChange(Number(event.target.value))}
                           className="w-full accent-[#7c3aed]"
                         />
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-gray-500">Curve</span>
+                        <div className="flex items-center gap-1">
+                          {CURVE_PRESETS.map((preset) => {
+                            const isActivePreset = Math.abs(activeCurveValue - preset.value) < 0.05;
+                            const magnitude = Math.abs(preset.value);
+                            const arcHeight = magnitude === 0 ? 0 : 10 + magnitude * 18;
+                            const arcDirection = preset.value >= 0 ? 1 : -1;
+
+                            const pathD = magnitude === 0
+                              ? 'M4 12 H20'
+                              : `M4 ${12 + arcDirection * arcHeight} Q12 ${12 - arcDirection * arcHeight} 20 ${12 + arcDirection * arcHeight}`;
+
+                            return (
+                              <button
+                                key={preset.value}
+                                type="button"
+                                onClick={() => handleCurvePresetClick(preset.value)}
+                                className={`w-12 h-10 rounded-lg border flex flex-col items-center justify-center gap-0.5 text-[10px] transition-colors ${
+                                  isActivePreset
+                                    ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#1d1d1f]'
+                                    : 'border-gray-200 text-gray-500 hover:border-[#7c3aed]/50 hover:text-[#1d1d1f]'
+                                }`}
+                                title={preset.description}
+                              >
+                                <svg viewBox="0 0 24 24" className="w-8 h-4" stroke="currentColor" fill="none" strokeWidth="1.8">
+                                  <path d={pathD} strokeLinecap="round"/>
+                                </svg>
+                                <span>{preset.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-1">
