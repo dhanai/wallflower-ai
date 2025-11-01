@@ -105,20 +105,20 @@ export async function POST(request: NextRequest) {
           }
         } else {
           // Create new design
-          const { data: designData, error: dbError } = await supabase
-            .from('designs')
-            .insert({
-              user_id: user.id,
-              title: prompt.substring(0, 100),
-              prompt: optimizedPrompt,
-              image_url: imageUrl,
-              aspect_ratio: aspectRatio || '4:5',
-            })
-            .select()
-            .single();
+        const { data: designData, error: dbError } = await supabase
+          .from('designs')
+          .insert({
+            user_id: user.id,
+            title: prompt.substring(0, 100),
+            prompt: optimizedPrompt,
+            image_url: imageUrl,
+            aspect_ratio: aspectRatio || '4:5',
+          })
+          .select()
+          .single();
 
-          if (!dbError && designData) {
-            design = designData;
+        if (!dbError && designData) {
+          design = designData;
             console.log('Design saved successfully:', designData.id);
           } else if (dbError) {
             // Check if error is due to missing table
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
         if (dbError instanceof Error && (dbError.message?.includes('relation') || dbError.message?.includes('does not exist'))) {
           console.error('Database tables not set up. Please run the migration file in Supabase SQL Editor.');
         } else {
-          console.error('Database error (non-fatal):', dbError);
+        console.error('Database error (non-fatal):', dbError);
         }
         // Continue even if save fails
       }

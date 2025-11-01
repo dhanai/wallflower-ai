@@ -1704,16 +1704,16 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
         <div className="flex items-center justify-end gap-2">
           {generatedImage && (
             <>
-              <button
+            <button
                 onClick={downloadCurrentAsPng}
-                className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
+              className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
                 title="Download PNG"
-              >
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-4 h-4" fill="currentColor">
                   <path d="M352 96C352 78.3 337.7 64 320 64C302.3 64 288 78.3 288 96L288 306.7L246.6 265.3C234.1 252.8 213.8 252.8 201.3 265.3C188.8 277.8 188.8 298.1 201.3 310.6L297.3 406.6C309.8 419.1 330.1 419.1 342.6 406.6L438.6 310.6C451.1 298.1 451.1 277.8 438.6 265.3C426.1 252.8 405.8 252.8 393.3 265.3L352 306.7L352 96zM160 384C124.7 384 96 412.7 96 448L96 480C96 515.3 124.7 544 160 544L480 544C515.3 544 544 515.3 544 480L544 448C544 412.7 515.3 384 480 384L433.1 384L376.5 440.6C345.3 471.8 294.6 471.8 263.4 440.6L206.9 384L160 384zM464 440C477.3 440 488 450.7 488 464C488 477.3 477.3 488 464 488C450.7 488 440 477.3 440 464C440 450.7 450.7 440 464 440z"/>
-                </svg>
-                <span className="hidden sm:inline text-sm">Download</span>
-              </button>
+              </svg>
+              <span className="hidden sm:inline text-sm">Download</span>
+            </button>
               <button
                 onClick={() => setShowOrderDrawer(true)}
                 className="inline-flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-white hover:bg-gray-900 transition-colors border border-gray-200 rounded-lg"
@@ -1761,12 +1761,12 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
             {generatedImage ? (
               <>
                 <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
-                  <Image
-                    src={generatedImage}
-                    alt="Generated design"
-                    fill
-                    className="object-cover"
-                  />
+                <Image
+                  src={generatedImage}
+                  alt="Generated design"
+                  fill
+                  className="object-cover"
+                />
                 </div>
                 {/* Hotspot indicator */}
                 {hotspot && !hotspotMode && (
@@ -2110,7 +2110,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
             <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-xl p-3">
             <div className="max-w-2xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Select.Root items={models} value={selectedModel} onValueChange={(value) => {
+            <Select.Root items={models} value={selectedModel} onValueChange={(value) => {
                 setSelectedModel(value as string);
                 setSelectedStyle(''); // Clear style when switching models
               }}>
@@ -2149,7 +2149,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                   </Select.Popup>
                 </Select.Positioner>
               </Select.Portal>
-              </Select.Root>
+            </Select.Root>
 
             {/* Style Selector - Only show when no image is generated yet */}
             {!generatedImage && (
@@ -2191,7 +2191,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                 </Select.Portal>
               </Select.Root>
             )}
-            </div>
+          </div>
 
             {/* Background/T-Shirt Color Picker (right) */}
             <div className="flex items-center gap-2 pl-1">
@@ -2206,7 +2206,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                   title="Choose background color"
                 />
                 <span className="hidden text-xs text-gray-700">{backgroundColor.toUpperCase()}</span>
-              </div>
+        </div>
             </div>
           </div>
           </div>
@@ -2467,9 +2467,9 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                 </Menu.Root>
 
               {/* Upscale Button */}
-              <Tooltip.Root>
-                <Tooltip.Trigger>
-                  <button
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    <button
                     onClick={async () => {
                       if (!generatedImage) return;
                       setShowSettings(false); // Close settings when clicking upscale
@@ -2520,20 +2520,20 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                     disabled={loading || mockupLoading || !generatedImage}
                     className="px-3 py-2 text-gray-700 hover:text-[#1d1d1f] hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Preview on T-Shirt"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" className="w-5 h-5">
                       <path d="M320 96C239.2 96 174.5 132.8 127.4 176.6C80.6 220.1 49.3 272 34.4 307.7C31.1 315.6 31.1 324.4 34.4 332.3C49.3 368 80.6 420 127.4 463.4C174.5 507.1 239.2 544 320 544C400.8 544 465.5 507.2 512.6 463.4C559.4 419.9 590.7 368 605.6 332.3C608.9 324.4 608.9 315.6 605.6 307.7C590.7 272 559.4 220 512.6 176.6C465.5 132.9 400.8 96 320 96zM176 320C176 240.5 240.5 176 320 176C399.5 176 464 240.5 464 320C464 399.5 399.5 464 320 464C240.5 464 176 399.5 176 320zM320 256C320 291.3 291.3 320 256 320C244.5 320 233.7 317 224.3 311.6C223.3 322.5 224.2 333.7 227.2 344.8C240.9 396 293.6 426.4 344.8 412.7C396 399 426.4 346.3 412.7 295.1C400.5 249.4 357.2 220.3 311.6 224.3C316.9 233.6 320 244.4 320 256z"/>
-                    </svg>
-                  </button>
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Positioner>
-                    <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
+                      </svg>
+                    </button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Portal>
+                    <Tooltip.Positioner>
+                      <Tooltip.Popup className="bg-[#1d1d1f] text-white text-sm px-3 py-1.5 rounded-lg">
                       Preview
-                    </Tooltip.Popup>
-                  </Tooltip.Positioner>
-                </Tooltip.Portal>
-              </Tooltip.Root>
+                      </Tooltip.Popup>
+                    </Tooltip.Positioner>
+                  </Tooltip.Portal>
+                </Tooltip.Root>
 
                 {/* Delete Button */}
                 <Tooltip.Root>
@@ -2649,7 +2649,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                           </AlertDialog.Close>
                         )}
                         <AlertDialog.Close 
-                          onClick={() => {
+                      onClick={() => {
                             setShowDeleteDialog(false);
                             setShowDeleteDesignConfirm(true);
                           }}
@@ -2714,7 +2714,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                             >
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
+                      </svg>
                           </div>
                         )}
                         {previewImageUrl && (
