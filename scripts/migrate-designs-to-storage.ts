@@ -111,7 +111,7 @@ async function uploadImageToStorage(
     }
 
     // Check if already in Supabase Storage
-    if (imageUrl.includes(SUPABASE_URL)) {
+    if (SUPABASE_URL && imageUrl.includes(SUPABASE_URL)) {
       console.log(`    Image already in Supabase Storage, skipping upload`);
       return imageUrl;
     }

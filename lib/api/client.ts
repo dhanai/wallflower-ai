@@ -28,13 +28,16 @@ async function request<T = unknown>(input: string, options: ApiRequestOptions = 
   const method = (rest.method ?? 'GET').toUpperCase();
   const hasBody = rest.body != null && rest.body !== undefined;
 
-  const finalHeaders: HeadersInit = {
-    Accept: 'application/json',
-    ...(headers || {}),
-  };
+  const finalHeaders = new Headers({ Accept: 'application/json' });
+  if (headers) {
+    const incoming = headers instanceof Headers ? headers : new Headers(headers as HeadersInit);
+    incoming.forEach((value, key) => finalHeaders.set(key, value));
+  }
 
   if (hasBody || method !== 'GET') {
-    finalHeaders['Content-Type'] = finalHeaders['Content-Type'] ?? 'application/json';
+    if (!finalHeaders.has('Content-Type')) {
+      finalHeaders.set('Content-Type', 'application/json');
+    }
   }
 
   const response = await fetch(input, {

@@ -322,7 +322,7 @@ export default function TemplatesPage() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                       {item.designs.map((design) => (
                         <ContextMenu.Root key={design.id}>
-                          <ContextMenu.Trigger asChild>
+                          <ContextMenu.Trigger className="block">
                             <DesignThumbnail
                               href={`/editor?template=${design.id}`}
                               imageUrl={design.image_url}
