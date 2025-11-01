@@ -412,12 +412,14 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [hoveredTextId, setHoveredTextId] = useState<string | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
+  const [curveMenuAnchorId, setCurveMenuAnchorId] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
   const textElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const textWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const textToolbarRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const curveMenuRefs = useRef<Record<string, { button: HTMLButtonElement | null; menu: HTMLDivElement | null }>>({});
   const textCanvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
   const canvasRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
@@ -445,6 +447,31 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   useEffect(() => {
     editingTextIdRef.current = editingTextId;
   }, [editingTextId]);
+
+  useEffect(() => {
+    if (!curveMenuAnchorId) return;
+    const refs = curveMenuRefs.current[curveMenuAnchorId];
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (refs?.button?.contains(target) || refs?.menu?.contains(target)) return;
+      setCurveMenuAnchorId(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setCurveMenuAnchorId(null);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [curveMenuAnchorId]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -509,7 +536,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       rotation: 0,
       fontFamily: 'Inter',
       fontSize: 0.08,
-      fontWeight: 'bold',
+      fontWeight: 'normal',
       fontStyle: 'normal',
       underline: false,
       textAlign: 'center',
@@ -832,6 +859,19 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     return clamp(activeTextLayer.curve, -1, 1);
   }, [activeTextLayer]);
 
+  const activeCurvePreset = useMemo(() => {
+    let closest = CURVE_PRESETS[0];
+    let minDiff = Infinity;
+    CURVE_PRESETS.forEach((preset) => {
+      const diff = Math.abs(activeCurveValue - preset.value);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = preset;
+      }
+    });
+    return closest;
+  }, [activeCurveValue]);
+
   const handleFontSizeChange = useCallback((sizePx: number) => {
     if (!activeTextId) return;
     const { height } = canvasSizeRef.current;
@@ -918,32 +958,6 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const handleColorChange = useCallback((color: string) => {
     if (!activeTextId) return;
     updateTextLayer(activeTextId, { color });
-  }, [activeTextId, updateTextLayer]);
-
-  const toggleFontWeight = useCallback(() => {
-    if (!activeTextId) return;
-    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
-    if (!layer) return;
-    updateTextLayer(activeTextId, { fontWeight: layer.fontWeight === 'bold' ? 'normal' : 'bold' });
-  }, [activeTextId, updateTextLayer]);
-
-  const toggleFontStyle = useCallback(() => {
-    if (!activeTextId) return;
-    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
-    if (!layer) return;
-    updateTextLayer(activeTextId, { fontStyle: layer.fontStyle === 'italic' ? 'normal' : 'italic' });
-  }, [activeTextId, updateTextLayer]);
-
-  const toggleUnderline = useCallback(() => {
-    if (!activeTextId) return;
-    const layer = textLayersRef.current.find((item) => item.id === activeTextId);
-    if (!layer) return;
-    updateTextLayer(activeTextId, { underline: !layer.underline });
-  }, [activeTextId, updateTextLayer]);
-
-  const handleTextAlignChange = useCallback((align: 'left' | 'center' | 'right') => {
-    if (!activeTextId) return;
-    updateTextLayer(activeTextId, { textAlign: align });
   }, [activeTextId, updateTextLayer]);
 
   const handleDeleteActiveText = useCallback(() => {
@@ -2330,76 +2344,95 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                         />
                       </div>
 
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 relative">
                         <span className="text-[11px] text-gray-500">Curve</span>
-                        <div className="flex items-center gap-1">
-                          {CURVE_PRESETS.map((preset) => {
-                            const isActivePreset = Math.abs(activeCurveValue - preset.value) < 0.05;
-                            const magnitude = Math.abs(preset.value);
-                            const arcHeight = magnitude === 0 ? 0 : 10 + magnitude * 18;
-                            const arcDirection = preset.value >= 0 ? 1 : -1;
-
-                            const pathD = magnitude === 0
-                              ? 'M4 12 H20'
-                              : `M4 ${12 + arcDirection * arcHeight} Q12 ${12 - arcDirection * arcHeight} 20 ${12 + arcDirection * arcHeight}`;
-
-                            return (
-                              <button
-                                key={preset.value}
-                                type="button"
-                                onClick={() => handleCurvePresetClick(preset.value)}
-                                className={`w-12 h-10 rounded-lg border flex flex-col items-center justify-center gap-0.5 text-[10px] transition-colors ${
-                                  isActivePreset
-                                    ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#1d1d1f]'
-                                    : 'border-gray-200 text-gray-500 hover:border-[#7c3aed]/50 hover:text-[#1d1d1f]'
-                                }`}
-                                title={preset.description}
-                              >
-                                <svg viewBox="0 0 24 24" className="w-8 h-4" stroke="currentColor" fill="none" strokeWidth="1.8">
-                                  <path d={pathD} strokeLinecap="round"/>
-                                </svg>
-                                <span>{preset.label}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1">
                         <button
+                          ref={(el) => {
+                            if (!el) {
+                              if (curveMenuRefs.current[layer.id]) {
+                                curveMenuRefs.current[layer.id].button = null;
+                              }
+                              return;
+                            }
+                            if (!curveMenuRefs.current[layer.id]) {
+                              curveMenuRefs.current[layer.id] = { button: null, menu: null };
+                            }
+                            curveMenuRefs.current[layer.id].button = el;
+                          }}
                           type="button"
-                          onClick={toggleFontWeight}
-                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs font-semibold ${activeTextLayer.fontWeight === 'bold' ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                          onClick={() => setCurveMenuAnchorId((prev) => (prev === layer.id ? null : layer.id))}
+                          className={`inline-flex items-center gap-2 px-2 py-1.5 border rounded-lg text-xs transition-colors ${
+                            curveMenuAnchorId === layer.id
+                              ? 'border-[#7c3aed] text-[#1d1d1f] bg-[#7c3aed]/10'
+                              : 'border-gray-200 text-gray-600 hover:border-[#7c3aed]/50 hover:text-[#1d1d1f]'
+                          }`}
                         >
-                          B
+                          <svg viewBox="0 0 24 24" className="w-6 h-3" stroke="currentColor" fill="none" strokeWidth="2">
+                            {(() => {
+                              const magnitude = Math.abs(activeCurvePreset.value);
+                              const arcHeight = magnitude === 0 ? 0 : 8 + magnitude * 18;
+                              const arcDirection = activeCurvePreset.value >= 0 ? 1 : -1;
+                              const pathD = magnitude === 0
+                                ? 'M4 12 H20'
+                                : `M4 ${12 + arcDirection * arcHeight} Q12 ${12 - arcDirection * arcHeight} 20 ${12 + arcDirection * arcHeight}`;
+                              return <path d={pathD} strokeLinecap="round"/>;
+                            })()}
+                          </svg>
+                          <span>{activeCurvePreset.label}</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-gray-400">
+                            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 011.08 1.04l-4.25 4.25a.75.75 0 01-1.06 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                          </svg>
                         </button>
-                        <button
-                          type="button"
-                          onClick={toggleFontStyle}
-                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs italic ${activeTextLayer.fontStyle === 'italic' ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                        >
-                          I
-                        </button>
-                        <button
-                          type="button"
-                          onClick={toggleUnderline}
-                          className={`w-7 h-7 flex items-center justify-center rounded border text-xs underline ${activeTextLayer.underline ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                        >
-                          U
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {(['left', 'center', 'right'] as const).map((align) => (
-                          <button
-                            key={align}
-                            type="button"
-                            onClick={() => handleTextAlignChange(align)}
-                            className={`w-7 h-7 flex items-center justify-center rounded border text-xs capitalize ${activeTextLayer.textAlign === align ? 'border-[#7c3aed] text-[#7c3aed]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                        {curveMenuAnchorId === layer.id && (
+                          <div
+                            ref={(el) => {
+                              if (!el) {
+                                if (curveMenuRefs.current[layer.id]) {
+                                  curveMenuRefs.current[layer.id].menu = null;
+                                }
+                                return;
+                              }
+                              if (!curveMenuRefs.current[layer.id]) {
+                                curveMenuRefs.current[layer.id] = { button: null, menu: null };
+                              }
+                              curveMenuRefs.current[layer.id].menu = el;
+                            }}
+                            className="absolute -top-32 left-0 bg-white border border-gray-200 rounded-xl shadow-xl p-2 flex gap-2 z-30"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
                           >
-                            {align[0].toUpperCase()}
-                          </button>
-                        ))}
+                            {CURVE_PRESETS.map((preset) => {
+                              const magnitude = Math.abs(preset.value);
+                              const arcHeight = magnitude === 0 ? 0 : 10 + magnitude * 18;
+                              const arcDirection = preset.value >= 0 ? 1 : -1;
+                              const pathD = magnitude === 0
+                                ? 'M4 12 H20'
+                                : `M4 ${12 + arcDirection * arcHeight} Q12 ${12 - arcDirection * arcHeight} 20 ${12 + arcDirection * arcHeight}`;
+                              const isActivePreset = Math.abs(activeCurveValue - preset.value) < 0.05;
+
+                              return (
+                                <button
+                                  key={preset.value}
+                                  type="button"
+                                  onClick={() => {
+                                    handleCurvePresetClick(preset.value);
+                                    setCurveMenuAnchorId(null);
+                                  }}
+                                  className={`w-12 h-12 rounded-lg border flex flex-col items-center justify-center gap-0.5 text-[10px] transition-colors ${
+                                    isActivePreset
+                                      ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#1d1d1f]'
+                                      : 'border-gray-200 text-gray-500 hover:border-[#7c3aed]/50 hover:text-[#1d1d1f]'
+                                  }`}
+                                >
+                                  <svg viewBox="0 0 24 24" className="w-8 h-4" stroke="currentColor" fill="none" strokeWidth="1.8">
+                                    <path d={pathD} strokeLinecap="round" />
+                                  </svg>
+                                  <span>{preset.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
 
                       <button
