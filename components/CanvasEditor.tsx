@@ -139,6 +139,7 @@ type TransformSession =
 
 const MIN_TEXT_WIDTH_PX = 40;
 const MIN_TEXT_HEIGHT_PX = 24;
+const SNAP_THRESHOLD_PX = 10;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -413,6 +414,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const [hoveredTextId, setHoveredTextId] = useState<string | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
   const [curveMenuAnchorId, setCurveMenuAnchorId] = useState<string | null>(null);
+  const [snapGuides, setSnapGuides] = useState<{ horizontal: boolean; vertical: boolean }>({ horizontal: false, vertical: false });
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasFileInputRef = useRef<HTMLInputElement>(null);
@@ -695,8 +697,39 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
           session.moved = true;
         }
 
-        const newXpx = clamp(session.initialX + deltaX, 0, canvasWidth - session.initialWidth);
-        const newYpx = clamp(session.initialY + deltaY, 0, canvasHeight - session.initialHeight);
+        let newXpx = clamp(session.initialX + deltaX, 0, canvasWidth - session.initialWidth);
+        let newYpx = clamp(session.initialY + deltaY, 0, canvasHeight - session.initialHeight);
+
+        // Calculate layer center
+        const layerCenterX = newXpx + session.initialWidth / 2;
+        const layerCenterY = newYpx + session.initialHeight / 2;
+
+        // Calculate canvas center
+        const canvasCenterX = canvasWidth / 2;
+        const canvasCenterY = canvasHeight / 2;
+
+        // Check snap distances
+        const snapXDistance = Math.abs(layerCenterX - canvasCenterX);
+        const snapYDistance = Math.abs(layerCenterY - canvasCenterY);
+
+        const shouldSnapX = snapXDistance < SNAP_THRESHOLD_PX;
+        const shouldSnapY = snapYDistance < SNAP_THRESHOLD_PX;
+
+        // Apply snapping
+        if (shouldSnapX) {
+          newXpx = canvasCenterX - session.initialWidth / 2;
+          newXpx = clamp(newXpx, 0, canvasWidth - session.initialWidth);
+        }
+        if (shouldSnapY) {
+          newYpx = canvasCenterY - session.initialHeight / 2;
+          newYpx = clamp(newYpx, 0, canvasHeight - session.initialHeight);
+        }
+
+        // Update snap guide state
+        setSnapGuides({
+          horizontal: shouldSnapY,
+          vertical: shouldSnapX,
+        });
 
         const newX = newXpx / canvasWidth;
         const newY = newYpx / canvasHeight;
@@ -816,6 +849,8 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
         setActiveTextId(session.layerId);
       }
 
+      // Clear snap guides when drag ends
+      setSnapGuides({ horizontal: false, vertical: false });
       transformSession.current = null;
     };
 
@@ -966,14 +1001,25 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   }, [activeTextId, removeTextLayer]);
 
   const handleCanvasPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const editingId = editingTextIdRef.current;
-    if (!editingId) return;
     const target = event.target as Node | null;
     if (!target) return;
-    const textEl = textElementRefs.current[editingId];
-    const toolbarEl = textToolbarRefs.current[editingId];
-    if (textEl?.contains(target) || toolbarEl?.contains(target)) return;
+
+    // Check if click is on any text layer (wrapper, element, or toolbar)
+    const clickedOnTextWrapper = Object.values(textWrapperRefs.current).some(el => el?.contains(target));
+    const clickedOnTextElement = Object.values(textElementRefs.current).some(el => el?.contains(target));
+    const clickedOnToolbar = Object.values(textToolbarRefs.current).some(el => el?.contains(target));
+    const clickedOnCurveMenu = Object.values(curveMenuRefs.current).some(refs => 
+      refs.button?.contains(target) || refs.menu?.contains(target)
+    );
+
+    if (clickedOnTextWrapper || clickedOnTextElement || clickedOnToolbar || clickedOnCurveMenu) {
+      return;
+    }
+
+    // Clear all text selection states when clicking outside
     setEditingTextId(null);
+    setActiveTextId(null);
+    setHoveredTextId(null);
   }, []);
 
   // Load design or template from query parameter
@@ -2109,6 +2155,30 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                   <p className="text-lg font-light">Drop an image here or click to upload</p>
                   <p className="text-sm mt-2">Or enter a prompt below to generate</p>
                 </div>
+              </div>
+            )}
+
+            {/* Snap Guide Lines */}
+            {(snapGuides.horizontal || snapGuides.vertical) && canvasSize.width > 0 && canvasSize.height > 0 && (
+              <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 15 }}>
+                {snapGuides.horizontal && (
+                  <div
+                    className="absolute w-full border-t-2 border-dashed border-[#7c3aed]"
+                    style={{
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                    }}
+                  />
+                )}
+                {snapGuides.vertical && (
+                  <div
+                    className="absolute h-full border-l-2 border-dashed border-[#7c3aed]"
+                    style={{
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                    }}
+                  />
+                )}
               </div>
             )}
 
