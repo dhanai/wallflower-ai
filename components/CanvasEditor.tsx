@@ -3097,17 +3097,18 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
           </div>
 
           {/* Editor Footer - Bottom toolbar and prompt area */}
-          <div className="flex-shrink-0 backdrop-blur-xl z-[60] md:z-auto">
+          <div className="flex-shrink-0 backdrop-blur-xl z-[60] md:z-auto relative">
             <div className="w-full max-w-4xl mx-auto px-2 sm:px-4">
               {/* Selectors */}
               {showSettings && (
                 <>
-                  {/* Invisible backdrop - click outside to close */}
+                  {/* Invisible backdrop - click outside to close, excludes bottom toolbar area on mobile */}
                   <div
-                    className="fixed inset-0 z-10"
+                    className="fixed inset-0 z-10 md:block"
+                    style={{ bottom: '200px' }}
                     onClick={() => setShowSettings(false)}
                   />
-                  <div className="absolute left-0 right-0 -top-[70px] px-2 sm:px-4 pt-2 pb-2 z-20" onClick={(e) => e.stopPropagation()}>
+                  <div className="absolute left-0 right-0 -top-[70px] px-2 sm:px-4 pt-2 pb-2 z-[70]" onClick={(e) => e.stopPropagation()}>
                     <div className="max-w-2xl mx-auto bg-white border border-gray-200 rounded-xl shadow-xl p-2 sm:p-3">
                       <div className="max-w-2xl mx-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -3200,7 +3201,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
               )}
 
               {/* Prompt Box */}
-              <div className="p-2 sm:p-4 pt-2">
+              <div className="p-2 sm:p-4 pt-2 relative z-[65]">
                 <div className="max-w-2xl mx-auto">
                   <div className="relative">
                     {!showSettings && (<p className="absolute -top-[20px] left-0 text-xs text-gray-500 mb-2 hidden sm:block">{selectedModel} {selectedStyle ? `- ${selectedStyle}` : ''}</p>)}
@@ -3335,7 +3336,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
               </div>
 
               {/* Control Buttons */}
-              <div className="px-2 sm:px-4 pb-2 sm:pb-4">
+              <div className="px-2 sm:px-4 pb-2 sm:pb-4 relative z-[65]">
                 <Tooltip.Provider>
                   <div className="flex items-center justify-center relative">
                     <div className="inline-flex items-stretch bg-white border border-gray-200 rounded-lg overflow-hidden divide-x divide-gray-200 overflow-x-auto max-w-2xl mx-auto">
