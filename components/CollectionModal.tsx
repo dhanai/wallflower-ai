@@ -14,6 +14,7 @@ interface CollectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   designId: string | null;
+  currentImageUrl?: string | null; // Current iteration image URL (what user sees)
   onSave?: () => void; // Optional callback after successful save
 }
 
@@ -21,6 +22,7 @@ export default function CollectionModal({
   open, 
   onOpenChange, 
   designId,
+  currentImageUrl,
   onSave 
 }: CollectionModalProps) {
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -136,6 +138,7 @@ export default function CollectionModal({
           designId,
           collectionId: selectedCollectionId,
           tags,
+          imageUrl: currentImageUrl || undefined, // Pass current iteration image if available
         }),
       });
 

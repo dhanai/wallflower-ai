@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { collectionId, designId, tags } = await request.json();
+  const { collectionId, designId, tags, imageUrl } = await request.json();
 
   if (!collectionId || !designId) {
     return NextResponse.json({ error: 'Collection ID and Design ID are required' }, { status: 400 });
@@ -49,18 +49,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Design not found' }, { status: 404 });
   }
 
+  // Use provided imageUrl (current iteration) if available, otherwise use design.image_url
+  // This ensures we save the iteration the user is currently viewing, not iteration[0]
+  const imageToSave = imageUrl || design.image_url;
+  const thumbnailToSave = imageUrl || design.thumbnail_image_url || design.image_url;
+
   // Upload images to Supabase Storage if they're not already there
-  let templateImageUrl = design.image_url;
-  let templateThumbnailUrl = design.thumbnail_image_url || design.image_url;
+  let templateImageUrl = imageToSave;
+  let templateThumbnailUrl = thumbnailToSave;
 
   // Check if image is already in Supabase Storage or external CDN
-  const isSupabaseStorage = design.image_url?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
-  const isExternalCDN = design.image_url?.startsWith('http') && !design.image_url.startsWith('data:');
+  const isSupabaseStorage = imageToSave?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+  const isExternalCDN = imageToSave?.startsWith('http') && !imageToSave.startsWith('data:');
 
   if (!isSupabaseStorage && !isExternalCDN) {
     // Upload main image to storage
     try {
-      templateImageUrl = await uploadImageToStorage(design.image_url, 'designs', 'templates');
+      templateImageUrl = await uploadImageToStorage(imageToSave, 'designs', 'templates');
       console.log('Uploaded template image to storage:', templateImageUrl);
     } catch (error: any) {
       console.error('Error uploading template image:', error);
@@ -68,14 +73,14 @@ export async function POST(request: Request) {
     }
   }
 
-  if (design.thumbnail_image_url && design.thumbnail_image_url !== design.image_url) {
-    const isThumbnailInStorage = design.thumbnail_image_url?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
-    const isThumbnailCDN = design.thumbnail_image_url?.startsWith('http') && !design.thumbnail_image_url.startsWith('data:');
+  if (thumbnailToSave && thumbnailToSave !== imageToSave) {
+    const isThumbnailInStorage = thumbnailToSave?.includes(process.env.NEXT_PUBLIC_SUPABASE_URL || '');
+    const isThumbnailCDN = thumbnailToSave?.startsWith('http') && !thumbnailToSave.startsWith('data:');
 
     if (!isThumbnailInStorage && !isThumbnailCDN) {
       // Upload thumbnail to storage
       try {
-        templateThumbnailUrl = await uploadImageToStorage(design.thumbnail_image_url, 'designs', 'templates');
+        templateThumbnailUrl = await uploadImageToStorage(thumbnailToSave, 'designs', 'templates');
         console.log('Uploaded template thumbnail to storage:', templateThumbnailUrl);
       } catch (error: any) {
         console.error('Error uploading template thumbnail:', error);

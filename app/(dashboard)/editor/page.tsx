@@ -25,5 +25,5 @@ export default function EditorPage() {
     fetchUserRole();
   }, []);
 
-  return <CanvasEditor embedded userRole={userRole} />;
+  return <CanvasEditor embedded={false} userRole={userRole} />;
 }

@@ -31,14 +31,22 @@ export async function POST(request: Request) {
     }
 
     // Create a new design in the user's account with the template's metadata
+    // Prefer template_thumbnail_image_url if it exists and differs from template_image_url
+    // This fixes existing templates that were saved before the fix (thumbnail has correct iteration)
+    const templateImageUrl = template.template_thumbnail_image_url && 
+                            template.template_thumbnail_image_url !== template.template_image_url
+                            ? template.template_thumbnail_image_url // Use thumbnail if it's different (likely the correct iteration)
+                            : template.template_image_url; // Otherwise use main image
+    const templateThumbnailUrl = template.template_thumbnail_image_url || template.template_image_url;
+    
     const { data: newDesign, error: createError } = await supabase
       .from('designs')
       .insert({
         user_id: user.id,
         title: `${template.title || 'Untitled'} (copy)`,
         prompt: template.prompt || '',
-        image_url: template.template_image_url, // Copy the template image URL
-        thumbnail_image_url: template.template_thumbnail_image_url || template.template_image_url,
+        image_url: templateImageUrl, // Use the template's final image (prefer thumbnail if different)
+        thumbnail_image_url: templateThumbnailUrl, // Use the template's thumbnail
         aspect_ratio: template.aspect_ratio || '1:1',
       })
       .select()

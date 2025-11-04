@@ -102,8 +102,8 @@ export default function DesignsPage() {
   }
 
   return (
-    <div className="bg-[#f5f5f7]">
-      <div className="max-w-7xl mx-auto p-8 min-h-screen flex flex-col">
+    <div className="bg-[#f5f5f7] min-h-full">
+      <div className="max-w-7xl mx-auto p-8 flex flex-col">
         {/* Header */}
         {designs.length > 0 && (
           <div className="mb-8 flex flex-col gap-4">

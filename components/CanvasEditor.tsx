@@ -7,6 +7,7 @@ import { Tooltip } from '@base-ui-components/react/tooltip';
 import { Menu } from '@base-ui-components/react/menu';
 import { AlertDialog } from '@base-ui-components/react/alert-dialog';
 import { Select } from '@base-ui-components/react/select';
+import { TextLayerPropertiesPanel } from './TextLayerPropertiesPanel';
 import { useToast } from '@/hooks/useToast';
 import CollectionModal from '@/components/CollectionModal';
 import { useMobileMenu } from '@/contexts/MobileMenuContext';
@@ -81,6 +82,15 @@ const FONT_OPTIONS = [
   { label: 'Archivo', value: 'Archivo', stack: 'Archivo, sans-serif' },
 ];
 
+type FillType = 'solid' | 'linear-gradient' | 'radial-gradient' | 'pattern';
+
+type BlendMode =
+  | 'source-over' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten'
+  | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference'
+  | 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity';
+
+type WarpType = 'none' | 'distort' | 'circle' | 'angle' | 'arch' | 'rise' | 'wave' | 'flag' | 'custom';
+
 type TextLayer = {
   id: string;
   text: string;
@@ -95,12 +105,333 @@ type TextLayer = {
   fontStyle: 'normal' | 'italic';
   underline: boolean;
   textAlign: 'left' | 'center' | 'right';
-  color: string;
+  color: string; // kept for backward compatibility, maps to fillSolid
   letterSpacing: number; // relative to canvas width
-  curve: number; // -1 (concave up) to 1 (concave down)
+  curve: number; // -1 (concave up) to 1 (concave down) - kept for backward compatibility, maps to warp.type='arc'
+
+  // Fills
+  fillType: FillType;
+  fillSolid: string;
+  fillGradient?: {
+    type: 'linear' | 'radial';
+    angleDeg?: number; // for linear
+    stops: Array<{ offset: number; color: string; alpha?: number }>;
+  };
+  fillPattern?: {
+    imageDataUrl: string;
+    scale: number; // 0.1–5
+    offsetX: number;
+    offsetY: number;
+  };
+
+  // Stroke / Outline
+  strokeEnabled: boolean;
+  strokeColor: string;
+  strokeWidthPx: number;
+  strokeJoin: CanvasLineJoin;
+  miterLimit: number;
+
+  // Shadow / Glow
+  shadowEnabled: boolean;
+  shadowColor: string;
+  shadowBlurPx: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
+
+  // Faux Extrude (3D stack)
+  extrudeEnabled: boolean;
+  extrudeDepthPx: number; // 0–80
+  extrudeDirectionDeg: number; // 0–360
+  extrudeColor: string;
+
+  // Blend mode
+  blendMode: BlendMode;
+
+  // Warp (beyond "curve")
+  warp: {
+    type: WarpType;
+    amount: number; // -1..1 typical
+    frequency?: number; // for flag/wave
+    perspective?: { // for perspective warp
+      tl: { x: number; y: number };
+      tr: { x: number; y: number };
+      br: { x: number; y: number };
+      bl: { x: number; y: number };
+    };
+  };
+
+  // Transform UX options
+  lockAspect: boolean;
+  rotateSnapDeg: number; // e.g., 15
+  scaleFromCenter: boolean;
 };
 
 type ResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+// Helper functions for advanced text rendering
+function hexToRgba(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const bigint = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function layerColor(hexOrRgba: string): string {
+  return hexOrRgba;
+}
+
+function rgba(hexOrRgba: string, alpha: number): string {
+  return hexOrRgba.startsWith('#') ? hexToRgba(hexOrRgba, alpha) : hexOrRgba;
+}
+
+function applyFill(ctx: CanvasRenderingContext2D, layer: TextLayer, widthPx: number, heightPx: number) {
+  if (layer.fillType === 'solid') {
+    ctx.fillStyle = layer.fillSolid || layer.color || '#1d1d1f';
+    return;
+  }
+
+  if (layer.fillType === 'linear-gradient' || layer.fillType === 'radial-gradient') {
+    const grad = layer.fillGradient?.type === 'radial'
+      ? ctx.createRadialGradient(widthPx / 2, heightPx / 2, 0, widthPx / 2, heightPx / 2, Math.hypot(widthPx, heightPx) / 2)
+      : (() => {
+          const angle = ((layer.fillGradient?.angleDeg ?? 0) * Math.PI) / 180;
+          const cx = widthPx / 2;
+          const cy = heightPx / 2;
+          const dx = Math.cos(angle) * (widthPx / 2);
+          const dy = Math.sin(angle) * (heightPx / 2);
+          return ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+        })();
+
+    (layer.fillGradient?.stops ?? []).forEach(s => {
+      grad.addColorStop(s.offset, s.alpha != null
+        ? rgba(layerColor(s.color), s.alpha)
+        : s.color
+      );
+    });
+    ctx.fillStyle = grad;
+    return;
+  }
+
+  if (layer.fillType === 'pattern' && layer.fillPattern?.imageDataUrl) {
+    // Pattern fills require async image loading - for now, fallback to solid
+    // In a production implementation, you'd cache loaded images and use them here
+    ctx.fillStyle = layer.fillSolid || layer.color || '#1d1d1f'; // fallback for now
+  }
+}
+
+function setShadow(ctx: CanvasRenderingContext2D, layer: TextLayer) {
+  if (layer.shadowEnabled) {
+    ctx.shadowColor = layer.shadowColor;
+    ctx.shadowBlur = layer.shadowBlurPx;
+    ctx.shadowOffsetX = layer.shadowOffsetX;
+    ctx.shadowOffsetY = layer.shadowOffsetY;
+  } else {
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  }
+}
+
+function renderGlyph(ctx: CanvasRenderingContext2D, layer: TextLayer, x: number, y: number, char: string, widthEstimate: number, widthPx: number, heightPx: number) {
+  // Blend mode
+  // @ts-ignore
+  ctx.globalCompositeOperation = layer.blendMode || 'source-over';
+
+  // Faux extrude: draw the same glyph multiple times along a vector
+  if (layer.extrudeEnabled && layer.extrudeDepthPx > 0) {
+    const steps = Math.max(1, Math.round(layer.extrudeDepthPx / 2));
+    const rad = (layer.extrudeDirectionDeg * Math.PI) / 180;
+    const dx = Math.cos(rad);
+    const dy = Math.sin(rad);
+    ctx.save();
+    setShadow(ctx, { ...layer, shadowEnabled: false });
+    ctx.fillStyle = layer.extrudeColor;
+    for (let i = steps; i >= 1; i--) {
+      ctx.fillText(char, x + dx * i, y + dy * i);
+    }
+    ctx.restore();
+  }
+
+  // Stroke (outline)
+  if (layer.strokeEnabled && layer.strokeWidthPx > 0) {
+    ctx.lineJoin = layer.strokeJoin;
+    ctx.miterLimit = layer.miterLimit;
+    ctx.lineWidth = layer.strokeWidthPx;
+    ctx.strokeStyle = layer.strokeColor;
+    setShadow(ctx, { ...layer, shadowEnabled: false });
+    ctx.strokeText(char, x, y);
+  }
+
+  // Fill (solid/gradient/pattern) with shadow/glow
+  setShadow(ctx, layer);
+  applyFill(ctx, layer, widthPx, heightPx);
+  ctx.fillText(char, x, y);
+}
+
+function warpOffset(layer: TextLayer, xRatio: number, yBase: number, totalAdvance: number): { dx: number; dy: number } {
+  const t = xRatio; // 0..1 across the text length
+  // Use full amount with multiplier for stronger effects (was 0.5, now 2-3x for visibility)
+  const A = (layer.warp.amount || 0) * 2.5; // Much stronger scaling
+  const f = layer.warp.frequency ?? 1.0; // Default frequency
+
+  switch (layer.warp.type) {
+    case 'distort': {
+      // Random-like distortion using sine waves at different frequencies
+      const f1 = f * 1.5;
+      const f2 = f * 2.3;
+      return {
+        dx: A * 15 * (Math.sin(2 * Math.PI * f1 * t) * 0.6 + Math.cos(2 * Math.PI * f2 * t) * 0.4),
+        dy: A * 12 * (Math.cos(2 * Math.PI * f1 * t) * 0.5 + Math.sin(2 * Math.PI * f2 * t) * 0.5) * yBase * 0.01
+      };
+    }
+    case 'circle': {
+      // Circular motion - text follows a circular path
+      const angle = t * 2 * Math.PI * f;
+      const radius = A * yBase * 0.3;
+      return {
+        dx: radius * Math.cos(angle),
+        dy: radius * Math.sin(angle)
+      };
+    }
+    case 'angle': {
+      // Diagonal angle/slant effect
+      const angle = A * 0.8; // Angle multiplier
+      return {
+        dx: angle * (t - 0.5) * totalAdvance * 0.5,
+        dy: angle * Math.abs(t - 0.5) * yBase * 0.4
+      };
+    }
+    case 'rise': {
+      // Text rises from left to right (or reverse)
+      return {
+        dx: 0,
+        dy: -A * t * yBase * 0.6 // Strong vertical rise
+      };
+    }
+    case 'wave': {
+      // Wave motion with both X and Y components
+      return {
+        dx: A * 20 * Math.sin(2 * Math.PI * f * t),
+        dy: A * 15 * Math.cos(2 * Math.PI * f * t) * yBase * 0.01
+      };
+    }
+    case 'flag': {
+      // Flag-like waving motion
+      return {
+        dx: A * 25 * Math.sin(2 * Math.PI * f * t) * (t * 0.5 + 0.5), // Amplifies toward end
+        dy: A * 18 * Math.cos(2 * Math.PI * f * t) * yBase * 0.01
+      };
+    }
+    case 'custom': {
+      // Custom: combination of multiple effects
+      const distort = A * 10 * Math.sin(2 * Math.PI * f * t * 1.3);
+      const wave = A * 8 * Math.cos(2 * Math.PI * f * t * 0.7);
+      return {
+        dx: distort + wave,
+        dy: (distort * 0.5 + wave * 0.3) * yBase * 0.01
+      };
+    }
+    default:
+      return { dx: 0, dy: 0 };
+  }
+}
+
+// Style presets for instant Kittl-like looks
+const TEXT_STYLE_PRESETS = {
+  RetroPop: (base: TextLayer): Partial<TextLayer> => ({
+    fillType: 'linear-gradient',
+    fillGradient: {
+      type: 'linear',
+      angleDeg: 90,
+      stops: [
+        { offset: 0, color: '#FFD166' },
+        { offset: 1, color: '#EF476F' },
+      ],
+    },
+    strokeEnabled: true,
+    strokeColor: '#073B4C',
+    strokeWidthPx: 6,
+    strokeJoin: 'round',
+    shadowEnabled: true,
+    shadowColor: 'rgba(0,0,0,0.25)',
+    shadowBlurPx: 16,
+    shadowOffsetX: 0,
+    shadowOffsetY: 4,
+    extrudeEnabled: true,
+    extrudeDepthPx: 10,
+    extrudeDirectionDeg: 315,
+    extrudeColor: '#073B4C',
+    blendMode: 'source-over',
+    warp: { ...base.warp, type: 'arch', amount: 0.4 },
+  }),
+  NeonGlow: (base: TextLayer): Partial<TextLayer> => ({
+    fillType: 'solid',
+    fillSolid: '#39FF14',
+    strokeEnabled: true,
+    strokeColor: '#0F0',
+    strokeWidthPx: 2,
+    shadowEnabled: true,
+    shadowColor: 'rgba(57,255,20,0.8)',
+    shadowBlurPx: 30,
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    extrudeEnabled: false,
+    blendMode: 'screen',
+    warp: { ...base.warp, type: 'none', amount: 0 },
+  }),
+  ClassicElegant: (base: TextLayer): Partial<TextLayer> => ({
+    fillType: 'solid',
+    fillSolid: '#1d1d1f',
+    strokeEnabled: true,
+    strokeColor: '#8B7355',
+    strokeWidthPx: 3,
+    strokeJoin: 'round',
+    shadowEnabled: true,
+    shadowColor: 'rgba(0,0,0,0.15)',
+    shadowBlurPx: 8,
+    shadowOffsetX: 0,
+    shadowOffsetY: 2,
+    extrudeEnabled: false,
+    blendMode: 'source-over',
+    warp: { ...base.warp, type: 'none', amount: 0 },
+  }),
+  Bold3D: (base: TextLayer): Partial<TextLayer> => ({
+    fillType: 'solid',
+    fillSolid: '#FFFFFF',
+    strokeEnabled: false,
+    shadowEnabled: false,
+    extrudeEnabled: true,
+    extrudeDepthPx: 20,
+    extrudeDirectionDeg: 315,
+    extrudeColor: '#000000',
+    blendMode: 'source-over',
+    warp: { ...base.warp, type: 'rise', amount: 0.3 },
+  }),
+  WaveVibe: (base: TextLayer): Partial<TextLayer> => ({
+    fillType: 'linear-gradient',
+    fillGradient: {
+      type: 'linear',
+      angleDeg: 45,
+      stops: [
+        { offset: 0, color: '#FF6B6B' },
+        { offset: 0.5, color: '#4ECDC4' },
+        { offset: 1, color: '#45B7D1' },
+      ],
+    },
+    strokeEnabled: false,
+    shadowEnabled: true,
+    shadowColor: 'rgba(0,0,0,0.2)',
+    shadowBlurPx: 12,
+    shadowOffsetX: 0,
+    shadowOffsetY: 3,
+    extrudeEnabled: false,
+    blendMode: 'source-over',
+    warp: { ...base.warp, type: 'wave', amount: 0.5, frequency: 1.0 },
+  }),
+};
 
 type TransformSession =
   | {
@@ -173,6 +504,24 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     return canvas;
   }
 
+  // Backward compatibility: map old fields to new if not present
+  const fillType = layer.fillType || 'solid';
+  const fillSolid = layer.fillSolid || layer.color || '#1d1d1f';
+  // Map old 'arc' to new 'arch', and handle legacy curve mapping
+  let warpType: WarpType = 'none';
+  if (layer.warp?.type) {
+    const existingType = layer.warp.type as string;
+    // Handle backward compatibility: map old 'arc' to new 'arch'
+    if (existingType === 'arc') {
+      warpType = 'arch';
+    } else if (existingType !== 'none' && ['none', 'distort', 'circle', 'angle', 'arch', 'rise', 'wave', 'flag', 'custom'].includes(existingType)) {
+      warpType = existingType as WarpType;
+    }
+  } else if (layer.curve !== 0) {
+    warpType = 'arch'; // Legacy curve maps to arch
+  }
+  const warpAmount = layer.warp?.amount ?? (layer.curve !== 0 ? layer.curve : 0);
+
   const fontSizePx = layer.fontSize * baseHeight;
   const letterSpacingPx = layer.letterSpacing * baseWidth;
   const fontParts = [
@@ -183,7 +532,6 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
   ].filter(Boolean);
 
   ctx.font = fontParts.join(' ');
-  ctx.fillStyle = layer.color;
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'left';
 
@@ -199,10 +547,13 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     return canvas;
   }
 
-  const effectiveCurve = text.includes('\n') ? 0 : clamp(layer.curve, -0.95, 0.95);
+  // Determine warp type: arch uses curve math (renamed from arc), others use flat layout + warpOffset
+  const isArch = warpType === 'arch';
+  const doOtherWarp = warpType !== 'none' && warpType !== 'arch';
+  const effectiveCurve = text.includes('\n') ? 0 : (isArch ? clamp(layer.curve, -0.95, 0.95) : 0);
   const curveRadians = effectiveCurve * MAX_CURVE_RADIANS;
 
-  const needsVerticalPadding = Math.abs(curveRadians) >= CURVE_THRESHOLD;
+  const needsVerticalPadding = Math.abs(curveRadians) >= CURVE_THRESHOLD || doOtherWarp;
   const paddingY = needsVerticalPadding ? fontSizePx * 0.8 : 0;
   const effectiveHeight = heightPx + paddingY * 2;
 
@@ -212,12 +563,81 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = layer.color;
   ctx.font = fontParts.join(' ');
   ctx.textBaseline = 'alphabetic';
-  ctx.textAlign = 'left';
+
+  // Prepare layer with defaults for backward compatibility
+  const layerWithDefaults: TextLayer = {
+    ...layer,
+    fillType,
+    fillSolid,
+    fillGradient: layer.fillGradient || { type: 'linear', angleDeg: 0, stops: [{ offset: 0, color: '#fff' }, { offset: 1, color: '#000' }] },
+    strokeEnabled: layer.strokeEnabled ?? false,
+    strokeColor: layer.strokeColor || '#000000',
+    strokeWidthPx: layer.strokeWidthPx ?? 2,
+    strokeJoin: layer.strokeJoin || 'miter',
+    miterLimit: layer.miterLimit ?? 4,
+    shadowEnabled: layer.shadowEnabled ?? false,
+    shadowColor: layer.shadowColor || 'rgba(0,0,0,0.35)',
+    shadowBlurPx: layer.shadowBlurPx ?? 12,
+    shadowOffsetX: layer.shadowOffsetX ?? 0,
+    shadowOffsetY: layer.shadowOffsetY ?? 2,
+    extrudeEnabled: layer.extrudeEnabled ?? false,
+    extrudeDepthPx: layer.extrudeDepthPx ?? 12,
+    extrudeDirectionDeg: layer.extrudeDirectionDeg ?? 315,
+    extrudeColor: layer.extrudeColor || '#000000',
+    blendMode: layer.blendMode || 'source-over',
+    warp: layer.warp || { type: warpType, amount: warpAmount, frequency: 0.5 },
+  };
+
+  if (doOtherWarp) {
+    // Non-arc warp: flat baseline with warp offset
+    let startX: number;
+    const startXAlignBase = layer.textAlign === 'left' ? 0 : layer.textAlign === 'right' ? widthPx - totalAdvance : (widthPx - totalAdvance) / 2;
+
+    if (layer.textAlign === 'left') {
+      startX = 0;
+    } else if (layer.textAlign === 'right') {
+      startX = Math.max(widthPx - totalAdvance, 0);
+    } else {
+      startX = (widthPx - totalAdvance) / 2;
+    }
+
+    const baselineY = paddingY + heightPx / 2;
+    const positions: { glyph: typeof glyphs[number]; x: number; y: number }[] = [];
+    let acc = 0;
+
+    glyphs.forEach((g) => {
+      const midX = startX + g.metrics.width / 2;
+      const xRatio = (midX - startXAlignBase) / Math.max(1, totalAdvance);
+      const off = warpOffset(layerWithDefaults, xRatio, fontSizePx, totalAdvance);
+      positions.push({ glyph: g, x: midX + off.dx, y: baselineY + off.dy });
+      startX += g.advance;
+    });
+
+    ctx.textAlign = 'center';
+    positions.forEach(p => {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      renderGlyph(ctx, layerWithDefaults, 0, 0, p.glyph.char, p.glyph.metrics.width, widthPx, heightPx);
+      ctx.restore();
+    });
+
+    // Underline for warped text
+    if (layer.underline) {
+      ctx.fillStyle = layerWithDefaults.strokeEnabled ? layerWithDefaults.strokeColor : layerWithDefaults.fillSolid;
+      positions.forEach(p => {
+        const underlineY = p.y + (p.glyph.metrics.actualBoundingBoxDescent || fontSizePx * 0.1);
+        const underlineHeight = Math.max(1, fontSizePx * 0.05);
+        ctx.fillRect(p.x - p.glyph.metrics.width / 2, underlineY, p.glyph.metrics.width, underlineHeight);
+      });
+    }
+
+    return canvas;
+  }
 
   if (Math.abs(curveRadians) < CURVE_THRESHOLD) {
+    // Flat baseline
     let startX: number;
     if (layer.textAlign === 'left') {
       startX = 0;
@@ -229,10 +649,11 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
 
     const baselineY = paddingY + heightPx / 2;
     glyphs.forEach((glyph) => {
-      ctx.fillText(glyph.char, startX, baselineY);
+      renderGlyph(ctx, layerWithDefaults, startX, baselineY, glyph.char, glyph.metrics.width, widthPx, heightPx);
       if (layer.underline) {
         const underlineY = baselineY + (glyph.metrics.actualBoundingBoxDescent || fontSizePx * 0.1);
         const underlineHeight = Math.max(1, fontSizePx * 0.05);
+        ctx.fillStyle = layerWithDefaults.strokeEnabled ? layerWithDefaults.strokeColor : layerWithDefaults.fillSolid;
         ctx.fillRect(startX, underlineY, glyph.metrics.width, underlineHeight);
       }
       startX += glyph.advance;
@@ -241,6 +662,7 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     return canvas;
   }
 
+  // Arc (curved) path
   const radius = totalAdvance / curveRadians;
   const baselineY = paddingY + heightPx / 2;
   const centerX = widthPx / 2;
@@ -279,16 +701,14 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     shiftX = widthPx / 2 - (minX + maxX) / 2;
   }
 
-  ctx.save();
   ctx.textAlign = 'center';
   positions.forEach(({ glyph, midAngle, x, y }) => {
     ctx.save();
     ctx.translate(x + shiftX, y);
     ctx.rotate(midAngle);
-    ctx.fillText(glyph.char, 0, 0);
+    renderGlyph(ctx, layerWithDefaults, 0, 0, glyph.char, glyph.metrics.width, widthPx, heightPx);
     ctx.restore();
   });
-  ctx.restore();
 
   return canvas;
 };
@@ -632,6 +1052,19 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     []
   );
 
+  // Apply text style preset
+  const applyTextPreset = useCallback(
+    (layerId: string, presetName: string) => {
+      const layer = textLayers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const preset = TEXT_STYLE_PRESETS[presetName as keyof typeof TEXT_STYLE_PRESETS];
+      if (!preset) return;
+      const patch = preset(layer);
+      updateTextLayer(layerId, patch);
+    },
+    [textLayers, updateTextLayer]
+  );
+
   const removeTextLayer = useCallback((id: string) => {
     setTextLayers((prev) => prev.filter((layer) => layer.id !== id));
     setActiveTextId((current) => (current === id ? null : current));
@@ -665,6 +1098,30 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       color: '#1d1d1f',
       letterSpacing: 0,
       curve: 0,
+
+      // New fields with defaults
+      fillType: 'solid',
+      fillSolid: '#1d1d1f',
+      fillGradient: { type: 'linear', angleDeg: 0, stops: [{ offset: 0, color: '#fff' }, { offset: 1, color: '#000' }] },
+      strokeEnabled: false,
+      strokeColor: '#000000',
+      strokeWidthPx: 2,
+      strokeJoin: 'miter',
+      miterLimit: 4,
+      shadowEnabled: false,
+      shadowColor: 'rgba(0,0,0,0.35)',
+      shadowBlurPx: 12,
+      shadowOffsetX: 0,
+      shadowOffsetY: 2,
+      extrudeEnabled: false,
+      extrudeDepthPx: 12,
+      extrudeDirectionDeg: 315,
+      extrudeColor: '#000000',
+      blendMode: 'source-over',
+      warp: { type: 'none', amount: 0, frequency: 0.5 },
+      lockAspect: true,
+      rotateSnapDeg: 15,
+      scaleFromCenter: false,
     };
 
     setTextLayers((prev) => [...prev, newLayer]);
@@ -874,6 +1331,10 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
           session.moved = true;
         }
 
+        const layer = textLayersRef.current.find((l) => l.id === session.layerId);
+        const keepAspect = layer?.lockAspect || event.shiftKey; // Shift forces aspect
+        const fromCenter = layer?.scaleFromCenter || event.altKey || event.metaKey; // Alt/Option or Cmd for center scaling
+
         let widthPx = session.initialWidth;
         let heightPx = session.initialHeight;
         let xPx = session.initialX;
@@ -902,6 +1363,36 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
             break;
         }
 
+        // Aspect lock
+        if (keepAspect) {
+          const aspect = session.initialWidth / session.initialHeight;
+          if (Math.abs(deltaX) > Math.abs(deltaY)) {
+            heightPx = widthPx / aspect;
+            // Adjust position based on corner
+            if (session.corner === 'top-left' || session.corner === 'top-right') {
+              yPx = session.initialY + (session.initialHeight - heightPx);
+            } else if (session.corner === 'bottom-left' || session.corner === 'bottom-right') {
+              yPx = session.initialY;
+            }
+          } else {
+            widthPx = heightPx * aspect;
+            // Adjust position based on corner
+            if (session.corner === 'top-left' || session.corner === 'bottom-left') {
+              xPx = session.initialX + (session.initialWidth - widthPx);
+            } else if (session.corner === 'top-right' || session.corner === 'bottom-right') {
+              xPx = session.initialX;
+            }
+          }
+        }
+
+        // Center scaling
+        if (fromCenter) {
+          const centerX = session.initialX + session.initialWidth / 2;
+          const centerY = session.initialY + session.initialHeight / 2;
+          xPx = centerX - widthPx / 2;
+          yPx = centerY - heightPx / 2;
+        }
+
         // Clamp dimensions and position
         if (widthPx < MIN_TEXT_WIDTH_PX) {
           if (session.corner === 'top-left' || session.corner === 'bottom-left') {
@@ -927,19 +1418,21 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
         const yRatio = yPx / canvasHeight;
 
         const heightScale = heightPx / session.initialHeight;
-        const nextFontSize = clamp(session.initialFontSize * heightScale, 0.01, 1);
+        // Better font size clamping (6px to 800px equivalent)
+        const nextFontSize = clamp(session.initialFontSize * heightScale, 0.006, 1.2);
 
         setTextLayers((prev) =>
           prev.map((layer) =>
             layer.id === session.layerId
               ? {
-                ...layer,
-                x: xRatio,
-                y: yRatio,
-                width: widthRatio,
-                height: heightRatio,
-                fontSize: nextFontSize,
-              }
+                  ...layer,
+                  x: xRatio,
+                  y: yRatio,
+                  width: widthRatio,
+                  height: heightRatio,
+                  fontSize: nextFontSize,
+                  letterSpacing: keepAspect ? layer.letterSpacing * (widthPx / session.initialWidth) : layer.letterSpacing,
+                }
               : layer
           )
         );
@@ -947,8 +1440,13 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       } else if (session.type === 'rotate') {
         const currentAngle = Math.atan2(event.clientY - session.center.y, event.clientX - session.center.x);
         const delta = currentAngle - session.startAngle;
-        const rotationDegrees = ((session.initialRotation + (delta * 180) / Math.PI) % 360 + 360) % 360;
-        updateTextLayer(session.layerId, { rotation: rotationDegrees });
+        const rawDeg = ((session.initialRotation + (delta * 180) / Math.PI) % 360 + 360) % 360;
+        
+        const layer = textLayersRef.current.find((l) => l.id === session.layerId);
+        const snap = layer?.rotateSnapDeg ?? 15;
+        const snapped = snap ? Math.round(rawDeg / snap) * snap : rawDeg;
+        
+        updateTextLayer(session.layerId, { rotation: snapped });
         document.body.style.cursor = 'grabbing';
       }
     };
@@ -1046,8 +1544,16 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
   const handleCurvePresetClick = useCallback((curveValue: number) => {
     if (!activeTextId) return;
     const normalized = clamp(curveValue, -1, 1);
-    updateTextLayer(activeTextId, { curve: normalized });
-  }, [activeTextId, updateTextLayer]);
+    const layer = textLayers.find((l) => l.id === activeTextId);
+    updateTextLayer(activeTextId, {
+      curve: normalized,
+      warp: {
+        ...(layer?.warp || { type: 'none', amount: 0, frequency: 0.5 }),
+        type: normalized !== 0 ? 'arch' : 'none',
+        amount: normalized,
+      },
+    });
+  }, [activeTextId, updateTextLayer, textLayers]);
 
   const drawCurvedTextLayer = useCallback((layer: TextLayer, canvasEl: HTMLCanvasElement) => {
     if (!canvasEl) return;
@@ -1093,7 +1599,18 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
       const canvasEl = textCanvasRefs.current[layer.id];
       if (!canvasEl) return;
 
-      if (Math.abs(layer.curve) < CURVE_THRESHOLD || layer.text.includes('\n')) {
+      // Check if layer needs canvas rendering (curved or advanced features)
+      const hasAdvancedFeatures = 
+        layer.strokeEnabled ||
+        layer.shadowEnabled ||
+        layer.extrudeEnabled ||
+        (layer.fillType && layer.fillType !== 'solid') ||
+        (layer.warp?.type && layer.warp.type !== 'none' && layer.warp.type !== 'arch') ||
+        (layer.blendMode && layer.blendMode !== 'source-over');
+      const isCurved = Math.abs(layer.curve) >= CURVE_THRESHOLD && !layer.text.includes('\n');
+      const needsCanvas = isCurved || hasAdvancedFeatures;
+
+      if (!needsCanvas) {
         const ctx = canvasEl.getContext('2d');
         if (ctx) {
           ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
@@ -2330,7 +2847,16 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                       // Always show selection when active (like Kittl/Figma), not just on hover
                       const selectionVisible = isActive || isEditing;
                       const hasMultiline = layer.text.includes('\n');
-                      const showCurvedCanvas = Math.abs(layer.curve) >= CURVE_THRESHOLD && !hasMultiline && fontsReady;
+                      // Show canvas if curved text OR if any advanced features are enabled
+                      const hasAdvancedFeatures = 
+                        layer.strokeEnabled ||
+                        layer.shadowEnabled ||
+                        layer.extrudeEnabled ||
+                        (layer.fillType && layer.fillType !== 'solid') ||
+                        (layer.warp?.type && layer.warp.type !== 'none' && layer.warp.type !== 'arch') ||
+                        (layer.blendMode && layer.blendMode !== 'source-over');
+                      const isCurved = Math.abs(layer.curve) >= CURVE_THRESHOLD && !hasMultiline;
+                      const showCurvedCanvas = (isCurved || hasAdvancedFeatures) && fontsReady;
                       const textOpacity = showCurvedCanvas && isEditing ? 0.2 : showCurvedCanvas ? 0 : 1;
 
                       // Calculate tight bounding box for curved text (like Kittl)
@@ -3167,246 +3693,26 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
           </div>
 
           {activeTextLayer ? (
-            <div className="p-4 space-y-6">
-              {/* Font Family */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">Font</label>
-                <Select.Root
-                  items={FONT_OPTIONS.map((font) => ({ label: font.label, value: font.value }))}
-                  value={activeTextLayer.fontFamily}
-                  onValueChange={(value) => handleFontFamilyChange(value as string)}
-                >
-                  <Select.Trigger className="w-full inline-flex items-center gap-2 px-3 py-2 bg-white text-sm text-[#1d1d1f] border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20 focus:border-[#7c3aed]/30">
-                    <Select.Value />
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Positioner side="bottom" align="start" sideOffset={4} className="z-[9999]">
-                      <Select.Popup className="bg-white border border-gray-200 rounded-lg shadow-lg py-2 max-h-60 overflow-auto min-w-[200px]">
-                        <Select.List>
-                          {FONT_OPTIONS.map((font) => (
-                            <Select.Item
-                              key={font.value}
-                              value={font.value}
-                              className="relative px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer transition-colors"
-                            >
-                              <Select.ItemText style={{ fontFamily: font.stack }}>{font.label}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.List>
-                      </Select.Popup>
-                    </Select.Positioner>
-                  </Select.Portal>
-                </Select.Root>
-              </div>
-
-              {/* Font Size & Color Row */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Size</label>
-                  <input
-                    type="number"
-                    min={8}
-                    max={400}
-                    value={activeFontSizePx}
-                    onChange={(event) => handleFontSizeChange(Number(event.target.value))}
-                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20 focus:border-[#7c3aed]/30"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Color</label>
-                  <input
-                    type="color"
-                    value={activeTextLayer.color}
-                    onChange={(event) => handleColorChange(event.target.value)}
-                    className="w-full h-10 rounded-lg border border-gray-200 cursor-pointer"
-                  />
-                </div>
-              </div>
-
-              {/* Letter Spacing */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">
-                  Letter Spacing: {activeLetterSpacingPx}px
-                </label>
-                <input
-                  type="range"
-                  min={-20}
-                  max={80}
-                  value={clamp(activeLetterSpacingPx, -20, 80)}
-                  onChange={(event) => handleLetterSpacingChange(Number(event.target.value))}
-                  className="w-full accent-[#7c3aed]"
-                />
-              </div>
-
-              {/* Curve - Kittl-style with slider */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-medium text-gray-700">Curve</label>
-                  <span className="text-xs text-gray-500">{Math.round(activeCurveValue * 100)}%</span>
-                </div>
-
-                {/* Slider with snap points at -75, -50, -25, 0, 25, 50, 75 */}
-                <input
-                  type="range"
-                  min={-100}
-                  max={100}
-                  step={1}
-                  value={activeCurveValue * 100}
-                  onChange={(e) => {
-                    const sliderValue = Number(e.target.value);
-                    // Snap to nearest preset value: -75, -50, -25, 0, 25, 50, 75
-                    const snapPoints = [-75, -50, -25, 0, 25, 50, 75];
-                    let closestSnap = snapPoints[0];
-                    let minDiff = Math.abs(sliderValue - snapPoints[0]);
-
-                    snapPoints.forEach((point) => {
-                      const diff = Math.abs(sliderValue - point);
-                      if (diff < minDiff) {
-                        minDiff = diff;
-                        closestSnap = point;
-                      }
-                    });
-
-                    // Only snap if within 5% of a snap point
-                    const snappedValue = minDiff <= 5 ? closestSnap : sliderValue;
-                    const normalizedCurve = clamp(snappedValue / 100, -1, 1);
-                    updateTextLayer(activeTextLayer.id, { curve: normalizedCurve });
-                  }}
-                  className="w-full accent-[#7c3aed]"
-                />
-              </div>
-
-              {/* Text Alignment */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">Alignment</label>
-                <div className="flex gap-2">
-                  {(['left', 'center', 'right'] as const).map((align) => (
-                    <button
-                      key={align}
-                      onClick={() => updateTextLayer(activeTextLayer.id, { textAlign: align })}
-                      className={`flex-1 px-3 py-2 text-sm border rounded-lg transition-colors ${activeTextLayer.textAlign === align
-                        ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed]'
-                        : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                        }`}
-                    >
-                      {align.charAt(0).toUpperCase() + align.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Style Options */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-2">Style</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => updateTextLayer(activeTextLayer.id, { fontWeight: activeTextLayer.fontWeight === 'bold' ? 'normal' : 'bold' })}
-                    className={`flex-1 px-3 py-2 text-sm border rounded-lg transition-colors font-bold ${activeTextLayer.fontWeight === 'bold'
-                      ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed]'
-                      : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                      }`}
-                  >
-                    Bold
-                  </button>
-                  <button
-                    onClick={() => updateTextLayer(activeTextLayer.id, { fontStyle: activeTextLayer.fontStyle === 'italic' ? 'normal' : 'italic' })}
-                    className={`flex-1 px-3 py-2 text-sm border rounded-lg transition-colors italic ${activeTextLayer.fontStyle === 'italic'
-                      ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed]'
-                      : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                      }`}
-                  >
-                    Italic
-                  </button>
-                  <button
-                    onClick={() => updateTextLayer(activeTextLayer.id, { underline: !activeTextLayer.underline })}
-                    className={`flex-1 px-3 py-2 text-sm border rounded-lg transition-colors underline ${activeTextLayer.underline
-                      ? 'border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed]'
-                      : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-                      }`}
-                  >
-                    Underline
-                  </button>
-                </div>
-              </div>
-
-              {/* Position & Size */}
-              <div className="pt-4 border-t border-gray-200">
-                <label className="block text-xs font-medium text-gray-700 mb-3">Position & Size</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">X</label>
-                    <input
-                      type="number"
-                      value={Math.round(activeTextLayer.x * (canvasSize.width || 1))}
-                      onChange={(e) => {
-                        const newX = Number(e.target.value) / (canvasSize.width || 1);
-                        updateTextLayer(activeTextLayer.id, { x: clamp(newX, 0, 1 - activeTextLayer.width) });
-                      }}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Y</label>
-                    <input
-                      type="number"
-                      value={Math.round(activeTextLayer.y * (canvasSize.height || 1))}
-                      onChange={(e) => {
-                        const newY = Number(e.target.value) / (canvasSize.height || 1);
-                        updateTextLayer(activeTextLayer.id, { y: clamp(newY, 0, 1 - activeTextLayer.height) });
-                      }}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Width</label>
-                    <input
-                      type="number"
-                      value={Math.round(activeTextLayer.width * (canvasSize.width || 1))}
-                      onChange={(e) => {
-                        const newWidth = Number(e.target.value) / (canvasSize.width || 1);
-                        updateTextLayer(activeTextLayer.id, { width: clamp(newWidth, 0.01, 1 - activeTextLayer.x) });
-                      }}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Height</label>
-                    <input
-                      type="number"
-                      value={Math.round(activeTextLayer.height * (canvasSize.height || 1))}
-                      onChange={(e) => {
-                        const newHeight = Number(e.target.value) / (canvasSize.height || 1);
-                        updateTextLayer(activeTextLayer.id, { height: clamp(newHeight, 0.01, 1 - activeTextLayer.y) });
-                      }}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs text-gray-600 mb-1">Rotation</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={360}
-                      value={Math.round(activeTextLayer.rotation)}
-                      onChange={(e) => updateTextLayer(activeTextLayer.id, { rotation: Number(e.target.value) })}
-                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-[#7c3aed]/20"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Delete Button */}
-              <div className="pt-4 border-t border-gray-200">
-                <button
-                  onClick={handleDeleteActiveText}
-                  className="w-full px-4 py-2 text-sm text-red-600 hover:text-white hover:bg-red-600 border border-red-200 rounded-lg transition-colors"
-                >
-                  Delete Text Layer
-                </button>
-              </div>
-            </div>
+            <TextLayerPropertiesPanel
+              activeTextLayer={activeTextLayer}
+              canvasSize={canvasSize}
+              activeFontSizePx={activeFontSizePx}
+              activeLetterSpacingPx={activeLetterSpacingPx}
+              activeCurveValue={activeCurveValue}
+              FONT_OPTIONS={FONT_OPTIONS}
+              TEXT_STYLE_PRESETS={TEXT_STYLE_PRESETS}
+              onUpdateTextLayer={updateTextLayer}
+              onFontFamilyChange={handleFontFamilyChange}
+              onFontSizeChange={handleFontSizeChange}
+              onColorChange={handleColorChange}
+              onLetterSpacingChange={handleLetterSpacingChange}
+              onCurvePresetClick={handleCurvePresetClick}
+              onApplyTextPreset={applyTextPreset}
+              onDeleteActiveText={handleDeleteActiveText}
+            />
           ) : (
             <div className="p-4 space-y-6">
+              {/* Background Color Picker */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-2">Background Color</label>
                 <div className="flex items-center gap-3">
@@ -3442,4 +3748,3 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
     </div>
   );
 }
-

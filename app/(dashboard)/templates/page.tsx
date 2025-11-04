@@ -221,7 +221,7 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] p-8">
+    <div className="min-h-full bg-[#f5f5f7] p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4">
