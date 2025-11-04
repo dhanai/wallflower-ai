@@ -11,6 +11,8 @@ import { TextLayerPropertiesPanel } from './TextLayerPropertiesPanel';
 import { useToast } from '@/hooks/useToast';
 import CollectionModal from '@/components/CollectionModal';
 import { useMobileMenu } from '@/contexts/MobileMenuContext';
+// Paper.js import disabled - will be loaded dynamically when needed
+// import { renderWarpedText as renderPaperWarpedText, createArchPath } from '@/lib/paperTextRenderer';
 
 const tshirtColors = [
   { label: 'White', hex: '#ffffff' },
@@ -157,6 +159,16 @@ type TextLayer = {
       tr: { x: number; y: number };
       br: { x: number; y: number };
       bl: { x: number; y: number };
+    };
+    // Custom Bezier path for advanced editing
+    bezierPath?: {
+      points: Array<{
+        x: number;
+        y: number;
+        handleIn?: { x: number; y: number };
+        handleOut?: { x: number; y: number };
+      }>;
+      closed?: boolean;
     };
   };
 
@@ -552,6 +564,14 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
   const doOtherWarp = warpType !== 'none' && warpType !== 'arch';
   const effectiveCurve = text.includes('\n') ? 0 : (isArch ? clamp(layer.curve, -0.95, 0.95) : 0);
   const curveRadians = effectiveCurve * MAX_CURVE_RADIANS;
+  
+  // Use Paper.js for better quality warps (arch, wave, flag, rise) when enabled
+  // Temporarily disabled until coordinate system issues are resolved
+  // This provides smoother, more accurate path rendering
+  const usePaperJS = false; // Disabled for now - fall back to canvas rendering
+  // const usePaperJS = (isArch || warpType === 'wave' || warpType === 'flag' || warpType === 'rise') && 
+  //                    typeof window !== 'undefined' && 
+  //                    (layer.warp?.bezierPath || Math.abs(warpAmount) > 0.1);
 
   const needsVerticalPadding = Math.abs(curveRadians) >= CURVE_THRESHOLD || doOtherWarp;
   const paddingY = needsVerticalPadding ? fontSizePx * 0.8 : 0;
@@ -589,6 +609,10 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     blendMode: layer.blendMode || 'source-over',
     warp: layer.warp || { type: warpType, amount: warpAmount, frequency: 0.5 },
   };
+
+  // Paper.js rendering disabled - using canvas-based rendering for all warps
+  // Paper.js integration will be re-enabled once coordinate system issues are resolved
+  // if (usePaperJS) { ... }
 
   if (doOtherWarp) {
     // Non-arc warp: flat baseline with warp offset
@@ -663,7 +687,16 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
   }
 
   // Arc (curved) path
-  const radius = totalAdvance / curveRadians;
+  // Ensure radius is reasonable to prevent text from going off-screen
+  // For very small curves, use a minimum radius to prevent extreme values
+  const minCurve = 0.01; // Minimum curve threshold
+  const effectiveCurveRadians = Math.max(minCurve, Math.abs(curveRadians));
+  let radius = totalAdvance / effectiveCurveRadians;
+  
+  // Limit radius to keep text within reasonable bounds
+  const maxRadius = Math.min(widthPx * 3, heightPx * 3); // Allow larger radius but not infinite
+  radius = Math.min(maxRadius, radius);
+  
   const baselineY = paddingY + heightPx / 2;
   const centerX = widthPx / 2;
   const centerY = baselineY + radius;
@@ -699,6 +732,18 @@ const createLayerCanvas = (layer: TextLayer, baseWidth: number, baseHeight: numb
     shiftX = widthPx - maxX;
   } else {
     shiftX = widthPx / 2 - (minX + maxX) / 2;
+  }
+
+  // Ensure the shifted text stays within canvas bounds
+  // Calculate bounds after shift
+  const shiftedMinX = minX + shiftX;
+  const shiftedMaxX = maxX + shiftX;
+  
+  // If text would go off-screen, adjust shift to keep it visible
+  if (shiftedMinX < 0) {
+    shiftX = shiftX - shiftedMinX; // Move right
+  } else if (shiftedMaxX > widthPx) {
+    shiftX = shiftX - (shiftedMaxX - widthPx); // Move left
   }
 
   ctx.textAlign = 'center';
@@ -3721,7 +3766,7 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                     value={backgroundColor}
                     onChange={(e) => setBackgroundColor(e.target.value)}
                     disabled={loading}
-                    className="w-12 h-12 rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 color-input"
+                    className="w-10 h-10 rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 color-input"
                     title="Choose background color"
                   />
                   <div className="flex-1">
