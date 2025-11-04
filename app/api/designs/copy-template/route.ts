@@ -10,6 +10,30 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Ensure user exists in public.users table (required for foreign key constraint)
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', user.id)
+      .single();
+
+    if (!existingUser) {
+      // Create user record if it doesn't exist
+      const { error: userError } = await supabase
+        .from('users')
+        .insert({
+          id: user.id,
+          email: user.email,
+          created_at: new Date().toISOString(),
+        });
+
+      if (userError) {
+        console.error('Error creating user:', userError);
+        return NextResponse.json({ error: 'Failed to create user record' }, { status: 500 });
+      }
+      console.log('Created user in public.users:', user.id);
+    }
+
     const { templateDesignId } = await request.json();
 
     if (!templateDesignId) {
