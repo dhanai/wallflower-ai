@@ -3253,8 +3253,8 @@ export default function CanvasEditor({ embedded = false, userRole = null }: { em
                           }
                         }}
                         placeholder={generatedImage ? "Edit your design..." : "Describe your design..."}
-                        className="flex-1 outline-none bg-white text-sm sm:text-base text-[#1d1d1f] placeholder:text-gray-400 autofill:bg-white autofill:text-[#1d1d1f]"
-                        style={{ backgroundColor: 'white', color: '#1d1d1f' }}
+                        className="flex-1 outline-none bg-white text-base text-[#1d1d1f] placeholder:text-gray-400 autofill:bg-white autofill:text-[#1d1d1f]"
+                        style={{ backgroundColor: 'white', color: '#1d1d1f', fontSize: '16px' }}
                         disabled={loading}
                       />
 
