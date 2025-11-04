@@ -16,8 +16,12 @@ function getPaper(): any {
     throw new Error('Paper.js is only available client-side');
   }
   if (!paperModule) {
-    // Dynamic require only in browser
-    paperModule = require('paper');
+    // Dynamic require only in browser - webpack will ignore this at build time
+    // @ts-ignore - Paper.js is a dynamic import
+    paperModule = typeof require !== 'undefined' ? require('paper') : null;
+    if (!paperModule) {
+      throw new Error('Paper.js library not available');
+    }
   }
   return paperModule;
 }
